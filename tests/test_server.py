@@ -58,6 +58,7 @@ class ServerTests(unittest.TestCase):
             'cleanup_seconds': 5,
             'wait_budget_seconds': 15,
             'wait_poll_interval_seconds': 1,
+            'wait_stop_after_no_progress': 2,
             'cancel_grace_seconds': 12,
             'require_orphan_guarantee': False,
         }
@@ -131,6 +132,34 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(record['state'], 'exited')
         self.assertIn('changed_conditions', json.dumps(record))
 
+    def test_chained_retry_gets_next_attempt(self):
+        """P1-a regression: a retry of a retry must derive attempt=2, not collide
+        with retry1's request_id/execution_id (mkdir FileExistsError)."""
+        script = self.tmp / 'chain-retry.py'
+        script.write_text('import time\ntime.sleep(30)\n', encoding='utf-8')
+        first = self.start(operation='script', program='python', language='python',
+                           script=str(script), args=[])
+        self.server.tool_cancel({'execution_id': first['execution_id']})
+        wait_state(self.record_of(first['execution_id']), None)
+        script.write_text('import time\ntime.sleep(0.2)\n', encoding='utf-8')
+        retry1 = self.start(operation='script', program='python', language='python',
+                            script=str(script), args=[],
+                            previous_execution=first['execution_id'])
+        record1 = wait_state(self.record_of(retry1['execution_id']), None)
+        self.assertEqual(record1['state'], 'exited')
+        script.write_text('import time\ntime.sleep(0.1)\n', encoding='utf-8')
+        retry2 = self.start(operation='script', program='python', language='python',
+                            script=str(script), args=[],
+                            previous_execution=retry1['execution_id'])
+        self.assertNotEqual(retry2['execution_id'], retry1['execution_id'])
+        record2 = wait_state(self.record_of(retry2['execution_id']), None)
+        self.assertEqual(record2['state'], 'exited')
+        self.assertIn('changed_conditions', json.dumps(record2))
+        business = json.loads((self.serve_root / retry2['execution_id'] / 'request.json')
+                              .read_text(encoding='utf-8'))['business']
+        self.assertEqual(business['attempt'], 2)
+        self.assertEqual(business['previous_request'], retry1['request_id'])
+
     # ---------- status / output ----------
 
     def test_status_and_output_paging(self):
@@ -180,6 +209,19 @@ class ServerTests(unittest.TestCase):
             self.assertTrue(result['observation']['changed'] or
                             result['observation']['unknown_metrics'])
         finally:
+            self.server.tool_cancel({'execution_id': started['execution_id']})
+
+    def test_wait_budget_exhausted_when_threshold_not_reached(self):
+        """P2-a: a threshold above the reachable stale count must let the budget
+        expire instead of stopping automatic wait early."""
+        started = self.start(operation='script', program='python', language='python',
+                             script=self.make_sleepy('wait-budget.py'), args=[])
+        try:
+            self.server.policy['wait_stop_after_no_progress'] = 99
+            result = self.server.tool_wait({'execution_id': started['execution_id']})
+            self.assertEqual(result['wait_outcome'], 'budget_exhausted')
+        finally:
+            self.server.policy['wait_stop_after_no_progress'] = 2
             self.server.tool_cancel({'execution_id': started['execution_id']})
 
     # ---------- read_text (A1) ----------

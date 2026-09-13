@@ -3,12 +3,12 @@
   "phase": "pure_beta_stage3",
   "policy": {
     "path": "C:\\Code\\command-entry\\policy.json",
-    "sha256": "ac98e4f81c70387ce6cc8ec29089c4e174638ac22443690d7644f6d7249acf03"
+    "sha256": "7515796f0b2d06632a93da28748500dd0665257d9cbde0cce6d0531296ed2ff8"
   },
   "runtime_files": [
     {
       "path": "C:\\Code\\command-entry\\server.py",
-      "sha256": "7c7a87b10236ec9189d226e0d766cae9847819a0a7c016d6cc0df47b559ec4a1"
+      "sha256": "1ce6fd4440d629748a0abcd244bedd94540287768b564334e2e9d19c21b64862"
     },
     {
       "path": "C:\\Code\\command-entry\\common.py",

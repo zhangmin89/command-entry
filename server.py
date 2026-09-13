@@ -131,17 +131,18 @@ class Server:
                     'in_flight_dedup': True, 'orphan_guaranteed': self.orphan_guaranteed,
                     'record_dir': str(self.context(Path(business['cwd']).resolve()) / existing)}
 
-        previous = None
         if 'previous_execution' in form:
-            previous = self.resolve_previous(form['previous_execution'], content_fingerprint)
-            task_ref, step_ref, previous_request = previous
+            task_ref, step_ref, previous_request, origin_attempt = self.resolve_previous(
+                form['previous_execution'], content_fingerprint)
+            attempt = origin_attempt + 1
         else:
             seq = 1 + sum(1 for path in self.serve_root.glob('*/request.json')
                           if read_json(path).get('content_fingerprint') == content_fingerprint)
             task_ref, step_ref, previous_request = 'mcp-direct', content_fingerprint[:12] + '-' + str(seq), None
+            attempt = 0
         business = {key: value for key, value in form.items()
                     if key not in ('workdir', 'previous_execution')}
-        business.update({'task_ref': task_ref, 'step_ref': step_ref, 'attempt': 1 if previous_request else 0,
+        business.update({'task_ref': task_ref, 'step_ref': step_ref, 'attempt': attempt,
                          'cwd': workdir, 'operation': operation})
         if previous_request:
             business['previous_request'] = previous_request
@@ -199,7 +200,7 @@ class Server:
         old = self.snapshot(directory)
         require(old['state'] in ('rejected', 'exited', 'timed_out', 'cancelled'),
                 'previous_attempt_not_confirmed_terminal')
-        return origin['task_ref'], origin['step_ref'], origin['request_id']
+        return origin['task_ref'], origin['step_ref'], origin['request_id'], origin['attempt']
 
     # ---------- status / output / cancel ----------
 
@@ -271,6 +272,7 @@ class Server:
         directory, _ = self.locate(form['execution_id'])
         budget = self.policy['wait_budget_seconds']
         interval = self.policy['wait_poll_interval_seconds']
+        threshold = self.policy.get('wait_stop_after_no_progress', 12)
         deadline = time.monotonic() + budget
         with FileMutex(directory / 'wait-state.lock'):
             journal_file = directory / 'wait-state.json'
@@ -287,12 +289,13 @@ class Server:
                     journal['count'] = 0 if observed['progress_confirmed'] else journal['count'] + 1
                     journal['previous'] = current
                     save(journal_file, journal)
-                    if journal['count'] >= 2:
+                    if journal['count'] >= threshold:
                         return {'execution_id': directory.name, 'state': state['state'],
                                 'wait_outcome': 'stop_automatic_wait',
                                 'no_progress_count': journal['count'],
+                                'no_progress_threshold': threshold,
                                 'observation': observed,
-                                'note': 'Two consecutive cross-call observations without progress.'}
+                                'note': 'Consecutive observations without progress reached the policy threshold (wait_stop_after_no_progress).'}
                 else:
                     journal['previous'] = current
                     save(journal_file, journal)
@@ -410,7 +413,7 @@ TOOLS = [
      'inputSchema': {'type': 'object', 'properties': {'execution_id': {'type': 'string'}},
                      'required': ['execution_id'], 'additionalProperties': False}},
     {'name': 'wait',
-     'description': 'Blocking observation loop over the record directory, bounded by policy wait_budget_seconds. Two consecutive cross-call observations without progress stop automatic waiting.',
+     'description': 'Blocking observation loop over the record directory, bounded by policy wait_budget_seconds. Consecutive observations without progress stop automatic waiting once the policy threshold wait_stop_after_no_progress (default 12) is reached.',
      'inputSchema': {'type': 'object', 'properties': {'execution_id': {'type': 'string'}},
                      'required': ['execution_id'], 'additionalProperties': False}},
     {'name': 'read_text',

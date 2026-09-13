@@ -16,9 +16,10 @@ waiting go through the `command_entry_exec_server` MCP tools:
 - `cancel` — layered: graceful state machine first, hard kill after the
   grace window.
 - `wait` — blocking observation with a policy budget. Rule of thumb: poll
-  again after the number of seconds the previous response suggested; two
-  consecutive no-progress observations stop automatic waiting — stopping
-  is not confirmation of termination.
+  again after the number of seconds the previous response suggested; a run
+  of no-progress observations stops automatic waiting once the policy
+  threshold `wait_stop_after_no_progress` (default 12, ≈ 60 s at the 5 s
+  poll interval) is reached — stopping is not confirmation of termination.
 - `read_text` — stateless range read (`file`, `start_line`, `max_lines`,
   optional `encoding`). Complete coverage metadata is returned; continue
   with `next_start_line`; strict decoding, no silent truncation.
@@ -27,8 +28,13 @@ waiting go through the `command_entry_exec_server` MCP tools:
 
 Same content while still RUNNING dedups to the same execution id. After a
 terminal state the same content is a new intent. A retry requires
-`previous_execution` plus genuinely changed bound inputs; merely adding a
-new input file never satisfies the retry condition.
+`previous_execution` with **identical business content**: the form
+(operation, program, args, bound paths) must match the previous attempt's
+content fingerprint exactly, otherwise the server rejects with
+`previous_execution_content_mismatch` — a retry with edited arguments is a
+new intent, not a lineage retry. On top of that, genuinely changed bound
+inputs (file contents) are required; merely adding a new input file never
+satisfies the retry condition.
 
 ## Exceptions
 

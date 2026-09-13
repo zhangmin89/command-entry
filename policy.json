@@ -24,6 +24,7 @@
   "cleanup_seconds": 10,
   "wait_budget_seconds": 30,
   "wait_poll_interval_seconds": 5,
+  "wait_stop_after_no_progress": 12,
   "cancel_grace_seconds": 15,
   "require_orphan_guarantee": false
 }
