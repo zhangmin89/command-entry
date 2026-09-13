@@ -1,0 +1,58 @@
+{
+  "schema_version": 2,
+  "phase": "pure_beta_stage3",
+  "policy": {
+    "path": "C:\\Code\\command-entry\\policy.json",
+    "sha256": "ac98e4f81c70387ce6cc8ec29089c4e174638ac22443690d7644f6d7249acf03"
+  },
+  "runtime_files": [
+    {
+      "path": "C:\\Code\\command-entry\\server.py",
+      "sha256": "7c7a87b10236ec9189d226e0d766cae9847819a0a7c016d6cc0df47b559ec4a1"
+    },
+    {
+      "path": "C:\\Code\\command-entry\\common.py",
+      "sha256": "792a3959f42299572779838a50c444d73865daa4c4b82ec8ed4669b7316b6313"
+    },
+    {
+      "path": "C:\\Code\\command-entry\\entry_v2.py",
+      "sha256": "9a7e8cdb98032e97b62a8f31b4f540f30f3f08f02333448a4269f44e4b5ecf93"
+    },
+    {
+      "path": "C:\\Code\\command-entry\\worker_v2.py",
+      "sha256": "9c3e9e3957b9eb443710dad5709e28d7c1f3a78f65dfad566c35c63268361f27"
+    },
+    {
+      "path": "C:\\Code\\command-entry\\windows_state.py",
+      "sha256": "474d8c13f0c29e28149ec4d50c33e7543d6ce288e9cb1fac8add1837aad07fef"
+    },
+    {
+      "path": "C:\\Code\\command-entry\\wait_state.py",
+      "sha256": "98c1752d591bce24abb99f23861966c49907377c8e1b9f90cbf5d27c20945012"
+    },
+    {
+      "path": "C:\\Code\\command-entry\\adapter.py",
+      "sha256": "05706b34d0df126471e66fc2c6d60c1e2deb3b7b1a69386d098c72724a5dc3c6"
+    },
+    {
+      "path": "C:\\Code\\command-entry\\output_store.py",
+      "sha256": "d9e87bbf8306c9a4c82565b26abd1d0cee62e6a972e57b379f34bc5123c3e989"
+    },
+    {
+      "path": "C:\\Code\\command-entry\\v1_support.py",
+      "sha256": "ebfe25c1b6faa1a418360c69bd806961633d88a5db013bab3d3b72b5ee2b8eb1"
+    },
+    {
+      "path": "C:\\Code\\command-entry\\invoke.ps1",
+      "sha256": "4fb2287245e19a2b3e0d76a11abe62966f7cf5ddd126efdd9635a645577ff0b2"
+    },
+    {
+      "path": "C:\\Code\\command-entry\\check_python.py",
+      "sha256": "c472ca5dcd434d101a23732bca834d4057587644116d3a2e845954dbcdb0e6f3"
+    },
+    {
+      "path": "C:\\Code\\command-entry\\check_powershell.ps1",
+      "sha256": "be7a483e00f458e071426d1051d3913e2a2d8d0aaeee919422132717496d8ccb"
+    }
+  ]
+}
