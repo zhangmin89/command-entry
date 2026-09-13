@@ -1,9 +1,15 @@
 """Deny-all sentinel for the shell channel (pure beta, plan stage 3).
 
-Negative matching: every PreToolUse Bash call is denied with a pointer to the
-exec server. No shape validation, no binding reads, no business data, no
-command content in records. This hook never executes tasks and never approves
-permissions.
+Negative matching: every PreToolUse call to a known shell tool is denied with
+a pointer to the exec server. No shape validation, no binding reads, no
+business data, no command content in records. This hook never executes tasks
+and never approves permissions.
+
+Tool-name coverage: hosts name their shell channel differently (Bash / shell
+/ exec / exec_command have all been observed). The deny set is a closed list
+of shell tool names; anything else passes through. When a host introduces a
+new shell tool name, add it here AND in the hooks.json matcher — an
+uncovered name leaves the channel silently open.
 """
 import argparse
 import json
@@ -12,8 +18,9 @@ import sys
 import time
 import uuid
 
-VERSION = 'pure-beta.hook-sentinel.1'
+VERSION = 'pure-beta.hook-sentinel.2'
 ROOT = Path(__file__).resolve().parent
+SHELL_TOOLS = ('Bash', 'shell', 'exec', 'exec_command')
 
 
 def handle(raw):
@@ -27,7 +34,7 @@ def handle(raw):
         event, route = {}, 'invalid_event_denied'
     else:
         route = 'outside_matcher'
-        if event.get('hook_event_name') == 'PreToolUse' and event.get('tool_name') == 'Bash':
+        if event.get('hook_event_name') == 'PreToolUse' and event.get('tool_name') in SHELL_TOOLS:
             route = 'shell_denied'
     if route != 'outside_matcher':
         answer = {'hookSpecificOutput': {'hookEventName': 'PreToolUse',

@@ -24,18 +24,20 @@ class SentinelTests(unittest.TestCase):
     def handle(self, event):
         return hook_v2.handle(json.dumps(event))
 
-    def test_any_bash_call_denied_with_pointer(self):
-        for command in ('git status', 'echo raw',
-                        "& 'C:/python.exe' -X utf8 'entry.py' run --request 'x.json'",
-                        'dir', 'rm -rf /', ''):
-            answer, meta = self.handle({'hook_event_name': 'PreToolUse',
-                                         'tool_name': 'Bash',
-                                         'tool_input': {'command': command}})
-            self.assertEqual(answer['hookSpecificOutput']['permissionDecision'], 'deny')
-            self.assertIn('exec server', answer['hookSpecificOutput']['permissionDecisionReason'])
-            self.assertEqual(meta['route'], 'shell_denied')
+    def test_any_shell_tool_call_denied_with_pointer(self):
+        for tool in hook_v2.SHELL_TOOLS:
+            for command in ('git status', 'echo raw',
+                            "& 'C:/python.exe' -X utf8 'entry.py' run --request 'x.json'",
+                            'dir', 'rm -rf /', ''):
+                answer, meta = self.handle({'hook_event_name': 'PreToolUse',
+                                             'tool_name': tool,
+                                             'tool_input': {'command': command}})
+                self.assertEqual(answer['hookSpecificOutput']['permissionDecision'], 'deny',
+                                 f'{tool} must be denied')
+                self.assertIn('exec server', answer['hookSpecificOutput']['permissionDecisionReason'])
+                self.assertEqual(meta['route'], 'shell_denied')
 
-    def test_non_bash_tool_passthrough(self):
+    def test_non_shell_tool_passthrough(self):
         for tool in ('Read', 'Write', 'Edit', 'Grep'):
             answer, _ = self.handle({'hook_event_name': 'PreToolUse', 'tool_name': tool,
                                      'tool_input': {'command': 'anything'}})

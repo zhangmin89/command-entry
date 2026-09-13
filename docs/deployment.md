@@ -37,7 +37,7 @@ the exact table name and fields follow the official user configuration page.
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "^Bash$",
+        "matcher": "^(Bash|shell|exec|exec_command)$",
         "hooks": [
           {
             "type": "command",
@@ -49,6 +49,13 @@ the exact table name and fields follow the official user configuration page.
   }
 }
 ```
+
+The matcher and `SHELL_TOOLS` in hook_v2.py must cover the actual tool
+names the host emits (observed: Bash, shell, exec, exec_command). An
+uncovered name leaves the shell channel silently open: verify on day one by
+triggering one raw shell call and confirming a new sentinel record with
+`decision: "deny"` appears in hook-records. If the host introduces a new
+shell tool name, add it in BOTH places.
 
 A new hook definition must be reviewed and trusted in Codex CLI `/hooks`;
 already-open desktop/IDE sessions must be restarted before verification.
