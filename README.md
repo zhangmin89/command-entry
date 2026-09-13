@@ -22,8 +22,12 @@ Python 3.14 + PowerShell 7 only. Development plan: `pure-beta-dev-plan.md`
 - `hook_v2.py` — **deny-all sentinel** (stage 3): every shell/exec_command
   call is denied with a pointer to the exec server. No shape validation,
   no binding reads, no command content in records.
-- `v1_support.py` / `runtime.json` — retained as the Job/syntax library for
-  entry_v2; the V1 hook/canonical routes are retired and inert.
+- `v1_support.py` — the Job/syntax/Capture/redact primitives used by
+  entry_v2. Everything else from V1 (request validation, canonical command,
+  hook, worker, CLI, and the runtime.json they read) was removed as dead
+  code in the pure-beta cleanup; no callers existed outside V1 routes.
+- `adapter.py` — observation comparison (`progress`) and the V2 wait
+  decision descriptor. The V2 host-envelope decoder was removed (dead).
 - `policy.json` — deployment policy template.
 - `tests/` — unittest suites; `scripts/` — stage smoke tests.
 
@@ -55,6 +59,14 @@ the Job and survives server crashes; `windows_state.spawn_creation_flags()`
 probes the server's Job environment and reports `orphan_guaranteed` so the
 policy key `require_orphan_guarantee` can fail closed when breakaway is not
 available.
+
+Deployed reality (2026-09-13): Codex launches MCP servers inside a Job that
+does not permit breakaway, so `orphan_guaranteed` reports `false` — a server
+or session crash can take in-flight business processes down with it. This is
+an availability risk, not a security gap, and is accepted:
+`require_orphan_guarantee` stays `false` (setting it `true` would reject
+every start, since the host's Job is not user-configurable). The startup
+probe logs the value on every server start.
 
 ## Stage 3: channel convergence
 

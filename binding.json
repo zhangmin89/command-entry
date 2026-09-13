@@ -8,7 +8,7 @@
   "runtime_files": [
     {
       "path": "C:\\Code\\command-entry\\server.py",
-      "sha256": "1ce6fd4440d629748a0abcd244bedd94540287768b564334e2e9d19c21b64862"
+      "sha256": "5d3d6d4138d4570cfc16f426a8fbb7fb684bb852eb7e1acd305d03f92965cb7d"
     },
     {
       "path": "C:\\Code\\command-entry\\common.py",
@@ -32,7 +32,7 @@
     },
     {
       "path": "C:\\Code\\command-entry\\adapter.py",
-      "sha256": "05706b34d0df126471e66fc2c6d60c1e2deb3b7b1a69386d098c72724a5dc3c6"
+      "sha256": "3b99caacd23a4f6c6bd8cc075aea9d2c6572ed14a0b5780f74040415344eb8c4"
     },
     {
       "path": "C:\\Code\\command-entry\\output_store.py",
@@ -40,7 +40,7 @@
     },
     {
       "path": "C:\\Code\\command-entry\\v1_support.py",
-      "sha256": "ebfe25c1b6faa1a418360c69bd806961633d88a5db013bab3d3b72b5ee2b8eb1"
+      "sha256": "f5c111d1ee08dc80d16d0c803dac855e2cba33dfa52fdd699e18f0e15af82f0a"
     },
     {
       "path": "C:\\Code\\command-entry\\invoke.ps1",

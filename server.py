@@ -24,7 +24,6 @@ from windows_state import FileMutex, spawn_creation_flags, terminate_if_same_ins
 
 VERSION = 'pure-beta.server.1'
 TERMINAL = {'exited', 'rejected', 'timed_out', 'cancelled', 'unknown', 'tool_error'}
-IDENTITY_FREE = ('task_ref', 'step_ref', 'attempt', 'previous_request')
 START_FIELDS = {'operation', 'program', 'language', 'script', 'parameters_file', 'args',
                 'stdin_file', 'input_paths', 'required_tools', 'encoding',
                 'artifacts', 'acceptance', 'expected_versions', 'workdir', 'previous_execution'}

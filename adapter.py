@@ -1,33 +1,5 @@
 """Pure host adapter. No subprocess, business file access, or permission decisions."""
-import json
-from common import Invalid, require
-
-
-def decode_host_result(response, execution_id):
-    require(isinstance(response, dict), 'host_response_object_required')
-    control = {'execution_id':execution_id,'host_session_id':response.get('session_id'),
-               'host_exit_code':response.get('exit_code'),'host_wall_seconds':response.get('wall_time_seconds'),
-               'raw_host_retained_by_host':True}
-    output = response.get('output')
-    if response.get('session_id') is not None and response.get('exit_code') is None:
-        return dict(control, state='running', result_available=False, next_action='query_existing_execution')
-    if not isinstance(output, str) or not output.strip():
-        return dict(control, state='unknown', result_available=False, reason='empty_host_result', next_action='query_existing_execution')
-    if output.lstrip().startswith('Warning: truncated output'):
-        return dict(control, state='unknown', result_available=False, reason='host_output_truncated', next_action='query_existing_execution')
-    try:
-        parsed = json.loads(output)
-        if parsed.get('version') == '1.0.0':
-            stream = parsed.get('stdout', {})
-            control['v1_wrapper_process'] = parsed.get('process')
-            if stream.get('truncated') or not stream.get('text'):
-                return dict(control, state='unknown', result_available=False, reason='wrapper_result_unavailable', next_action='query_existing_execution')
-            parsed = json.loads(stream['text'])
-        if not isinstance(parsed, dict) or 'state' not in parsed:
-            raise ValueError('invalid control shape')
-        return dict(control, state=parsed['state'], result_available=True, result=parsed)
-    except (ValueError,TypeError,AttributeError):
-        return dict(control, state='unknown', result_available=False, reason='unreadable_control_envelope', next_action='query_existing_execution')
+from common import require
 
 
 def progress(before, after):
