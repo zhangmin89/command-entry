@@ -43,6 +43,17 @@ class SentinelTests(unittest.TestCase):
                                      'tool_input': {'command': 'anything'}})
             self.assertEqual(answer, {})
 
+    def test_exec_code_cell_never_denied(self):
+        # 'exec' is the code-mode JS cell and the ONLY channel for MCP tool
+        # calls on Codex 0.154.0-alpha.x. Denying it would lock out the exec
+        # server itself. Guard: it must stay out of SHELL_TOOLS and pass
+        # through even if a host starts emitting PreToolUse for it.
+        self.assertNotIn('exec', hook_v2.SHELL_TOOLS)
+        answer, meta = self.handle({'hook_event_name': 'PreToolUse', 'tool_name': 'exec',
+                                     'tool_input': {'command': 'anything'}})
+        self.assertEqual(answer, {})
+        self.assertEqual(meta['route'], 'outside_matcher')
+
     def test_non_pretooluse_event_passthrough(self):
         answer, _ = self.handle({'hook_event_name': 'PostToolUse', 'tool_name': 'Bash',
                                  'tool_input': {'command': 'x'}})

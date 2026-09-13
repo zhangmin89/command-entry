@@ -6,10 +6,18 @@ business data, no command content in records. This hook never executes tasks
 and never approves permissions.
 
 Tool-name coverage: hosts name their shell channel differently (Bash / shell
-/ exec / exec_command have all been observed). The deny set is a closed list
-of shell tool names; anything else passes through. When a host introduces a
-new shell tool name, add it here AND in the hooks.json matcher — an
-uncovered name leaves the channel silently open.
+/ exec_command have all been observed). The deny set is a closed list of
+shell tool names; anything else passes through. When a host introduces a new
+shell tool name, add it here AND in the hooks.json matcher — an uncovered
+name leaves the channel silently open.
+
+WARNING — 'exec' is deliberately NOT in the deny set: on Codex
+0.154.0-alpha.x, `exec` is the code-mode JS cell and the ONLY channel
+through which the model calls MCP tools. Denying it would lock out the exec
+server itself the day the host starts emitting PreToolUse for it. Field
+evidence (961 historical records, all tool_name=Bash) shows no `exec` event
+ever reaching this hook. Re-add only after a real recorded event proves
+`exec` names a shell call, not the code cell.
 """
 import argparse
 import json
@@ -18,9 +26,9 @@ import sys
 import time
 import uuid
 
-VERSION = 'pure-beta.hook-sentinel.2'
+VERSION = 'pure-beta.hook-sentinel.3'
 ROOT = Path(__file__).resolve().parent
-SHELL_TOOLS = ('Bash', 'shell', 'exec', 'exec_command')
+SHELL_TOOLS = ('Bash', 'shell', 'exec_command')
 
 
 def handle(raw):
