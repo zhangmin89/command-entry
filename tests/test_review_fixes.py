@@ -481,5 +481,27 @@ class RejectionLogTests(unittest.TestCase):
         self.assertEqual(rejected[-1]['kind'], 'rejected')
 
 
+class NativeExeGuardTests(unittest.TestCase):
+    """BatBadBut guard: batch files must never execute as native programs,
+    even if someone registers one (V1 .exe rule restored at plan layer)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = Path(tempfile.mkdtemp(prefix='review-exeguard '))
+        cls.policy, cls.policy_path = make_policy(cls.tmp)
+        cls.policy['programs']['npm'] = {'kind': 'native',
+                                         'path': r'C:\nvm4w\nodejs\npm.cmd'}
+        cls.policy_path.write_text(json.dumps(cls.policy), encoding='utf-8')
+        cls.server = server_module.Server(cls.policy_path)
+
+    def test_native_cmd_rejected_at_plan(self):
+        started = self.server.tool_start({'operation': 'native', 'program': 'npm',
+                                          'workdir': str(self.tmp), 'args': ['--version']})
+        record = Path(started['record_dir'])
+        self.assertEqual(until_terminal(record), 'rejected')
+        result = json.loads((record / 'result.json').read_text(encoding='utf-8'))
+        self.assertIn('native_requires_exe', result['error']['reason'])
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)

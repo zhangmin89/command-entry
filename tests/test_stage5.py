@@ -60,6 +60,10 @@ class ValidatePolicyTests(unittest.TestCase):
         self.assertTrue(any('operation_budget_invalid' in p for p in problems))
         problems = validate_policy.validate(base_policy(wait_budget_seconds=99999))
         self.assertTrue(any('wait_budget_seconds' in p for p in problems))
+        # BatBadBut guard: batch files must never register as native programs.
+        problems = validate_policy.validate(base_policy(
+            programs={'npm': {'kind': 'native', 'path': r'C:\nvm4w\nodejs\npm.cmd'}}))
+        self.assertTrue(any('native_program_must_be_exe' in p for p in problems))
 
 
 class SelfCheckTests(unittest.TestCase):

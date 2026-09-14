@@ -4,7 +4,7 @@
   "powershell": "C:\\Program Files\\PowerShell\\7\\pwsh.exe",
   "record_root": ".codex-command-records",
   "serve_root": "C:\\Users\\zhang\\.codex\\command-entry\\serve-input",
-  "working_roots": ["C:\\", "E:\\", "F:\\"],
+  "working_roots": null,
   "read_roots": null,
   "programs": {
     "dotnet": {"kind": "native", "path": "C:\\Program Files\\dotnet\\dotnet.exe"},

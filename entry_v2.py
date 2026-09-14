@@ -118,6 +118,12 @@ def plan(req, policy, locks, directory):
     checked = {'status':'not_applicable'}
     if op == 'native':
         require(program['kind'] == 'native', 'interpreter_requires_explicit_script_or_module_operation')
+        # V1 rule restored: native executables must be real .exe. Batch files
+        # (.cmd/.bat) are routed through cmd.exe by CreateProcess, which
+        # RE-INTERPRETS the argument line — model-controlled args containing
+        # & | % ^ would escape the whitelist entirely (BatBadBut class).
+        require(executable.lower().endswith('.exe'),
+                'native_requires_exe_batch_files_route_through_cmd')
         argv = [executable,*args]
     elif op == 'python_unittest':
         require(program['kind'] == 'python', 'python_runtime_required')

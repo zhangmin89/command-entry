@@ -33,6 +33,12 @@ def validate(policy):
              'program_invalid:' + str(name))
         need(Path(item['path']).is_file() if isinstance(item, dict) and isinstance(item.get('path'), str) else False,
              'program_path_missing:' + str(name))
+        # Batch files route through cmd.exe, which re-interprets the argument
+        # line — model-controlled args would escape the whitelist (BatBadBut
+        # class). native programs must be real .exe files.
+        if isinstance(item, dict) and item.get('kind') == 'native' and isinstance(item.get('path'), str):
+            need(item['path'].lower().endswith('.exe'),
+                 'native_program_must_be_exe:' + str(name))
     operations = policy.get('operations', {})
     for name in OPERATIONS:
         definition = operations.get(name, {})

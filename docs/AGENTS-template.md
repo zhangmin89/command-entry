@@ -7,10 +7,16 @@ The shell channel is closed. All command execution, file reads and progress
 waiting go through the `command_entry_exec_server` MCP tools:
 
 - `start_operation` — one business operation. Required: `operation`
-  (native/script/python_unittest), `program`, `workdir`. No timeout field:
+  (native/script/python_unittest), `program`, `workdir`. `program` is the
+  policy KEY (`"git"`, `"node"`), never an executable path. No timeout field:
   budgets come from policy. `stdin_file` takes an absolute path; never
   inline stdin. `previous_execution` starts a retry only when the bound
-  inputs actually changed.
+  inputs actually changed. Batch files (.cmd/.bat) are never whitelisted —
+  run package scripts through the script operation instead, e.g. an npm
+  build is `{"operation": "script", "program": "node",
+  "language": "javascript",
+  "script": "C:\\nvm4w\\nodejs\\node_modules\\npm\\bin\\npm-cli.js",
+  "args": ["run", "build"], "workdir": "<project>"}`.
 - `status` / `output` — read the execution envelope; page through retained
   redacted output with `offset`/`count` (Unicode characters per stream).
 - `cancel` — layered: graceful state machine first, hard kill after the
