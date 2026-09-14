@@ -171,6 +171,19 @@ class UpdatePolicySmoke(unittest.TestCase):
         self.assertNotEqual(completed.returncode, 0)
         self.assertEqual(self.hashes(repo), before)
 
+    def test_policy_path_equal_to_live_revalidates_and_repins(self):
+        # Field case (2026-09-14): pointing -PolicyPath at the live policy
+        # itself must not crash on self-copy; it validates and re-pins.
+        repo = self.make_repo('stage5-policy-self ')
+        before = self.hashes(repo)
+        completed = subprocess.run(
+            ['pwsh', '-NoProfile', '-File', str(repo / 'update-policy.ps1'),
+             '-RepoRoot', str(repo), '-PolicyPath', str(repo / 'policy.json')],
+            capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=120)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn('validation + re-pin only', completed.stdout)
+        self.assertEqual(self.hashes(repo), before)
+
     def test_invalid_candidate_leaves_live_pair_untouched(self):
         # R4: validation failure happens before any live write or backup.
         repo = self.make_repo('stage5-policy-fail-validate ')

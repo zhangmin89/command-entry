@@ -77,7 +77,11 @@ if (Test-Path -LiteralPath $bindingFile) {
 Write-Output "Old pair archived: $backup"
 
 # ---------- stage 4: commit the candidate ----------
-Copy-Item -LiteralPath $candidate -Destination $livePolicy
+if ($candidate -ne $livePolicy) {
+    Copy-Item -LiteralPath $candidate -Destination $livePolicy
+} else {
+    Write-Output 'Candidate IS the live policy: validation + re-pin only, nothing to commit.'
+}
 
 # ---------- stage 5: re-pin binding; any failure restores the old pair ----------
 $rebuilt = & $python -X utf8 (Join-Path $repo 'scripts\build_binding.py') --policy $livePolicy --out $bindingFile
