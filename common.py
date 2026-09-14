@@ -10,6 +10,7 @@ import uuid
 VERSION = '2.0.0-candidate.3-closeout.2'
 NAMESPACE = uuid.UUID('a93e3e64-c90b-4ca6-a8da-bcf070c04196')
 OPERATIONS = {'location', 'read_text', 'native', 'script', 'python_unittest', 'status', 'output', 'cancel'}
+EXECUTION_OPTIONS = {'run_seconds': (1, 1800), 'output_quota_bytes': (1024, 16777216)}
 
 
 class Invalid(ValueError):
@@ -60,14 +61,38 @@ def absolute(value):
     return ntpath.normpath(value)
 
 
+def check_execution_options(values):
+    for key, (low, high) in EXECUTION_OPTIONS.items():
+        if key in values:
+            value = values[key]
+            require(type(value) is int and low <= value <= high,
+                    f'{key}_range_{low}_{high}')
+
+
+def execution_options(req, policy):
+    """Resolve approved defaults and overrides without changing the policy."""
+    definition = policy.get('operations', {}).get(req['operation'])
+    require(definition is not None and 'run_seconds' in definition, 'approved_run_budget_missing')
+    require('output_quota_bytes' in policy, 'approved_output_quota_missing')
+    defaults = {'run_seconds': definition['run_seconds'],
+                'output_quota_bytes': policy['output_quota_bytes']}
+    check_execution_options(defaults)
+    check_execution_options(req)
+    return {key: req.get(key, value) for key, value in defaults.items()}
+
+
 def shape(source):
     require(isinstance(source, dict), 'request_object_required')
     req = json.loads(json.dumps(source))
     known = {'task_ref','step_ref','attempt','previous_request','operation','cwd','program','language','script','args','parameters_file','stdin_file','input_paths','required_tools','encoding','file','start_line','line_count','execution_id','stream','offset','count','artifacts','acceptance','expected_versions','wait_receipt'}
-    require(not set(req).difference(known), 'unknown_request_fields')
+    require(not set(req).difference(known | EXECUTION_OPTIONS.keys()), 'unknown_request_fields')
     for field in ('task_ref','step_ref'):
         require(isinstance(req.get(field), str) and 0 < len(req[field]) <= 160, field + '_required')
     require(req.get('operation') in OPERATIONS, 'unsupported_operation')
+    if EXECUTION_OPTIONS.keys() & req.keys():
+        require(req['operation'] in ('native', 'script', 'python_unittest'),
+                'execution_options_require_execution_operation')
+        check_execution_options(req)
     req['cwd'] = absolute(req['cwd'])
     req.setdefault('attempt', 0)
     require(type(req['attempt']) is int and req['attempt'] >= 0, 'invalid_attempt')

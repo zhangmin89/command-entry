@@ -43,11 +43,11 @@ def validate(policy):
     for name in OPERATIONS:
         definition = operations.get(name, {})
         budget = definition.get('run_seconds')
-        need(name in operations and type(budget) in (int, float) and 0 < budget <= 3600,
+        need(name in operations and type(budget) is int and 1 <= budget <= 1800,
              'operation_budget_invalid:' + name)
         need(definition.get('wait_category') in ('long_task', 'process_readiness'),
              'wait_category_invalid:' + name)
-    for key, low, high in (('output_quota_bytes', 256, 1048576),
+    for key, low, high in (('output_quota_bytes', 1024, 16777216),
                            ('read_quota_bytes', 256, 1048576),
                            ('cleanup_seconds', 0, 600),
                            ('wait_budget_seconds', 1, 300),

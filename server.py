@@ -16,7 +16,7 @@ import sys
 import time
 import uuid
 
-from common import (Invalid, digest, load_policy, packed, publish_new, read_json,
+from common import (EXECUTION_OPTIONS, Invalid, digest, execution_options, load_policy, packed, publish_new, read_json,
                     request_digest, require, save, shape, write_new)
 import adapter
 import entry_v2
@@ -31,7 +31,8 @@ TERMINAL = {'exited', 'rejected', 'timed_out', 'cancelled', 'unknown', 'tool_err
 CONFIRMED_TERMINAL = {'exited', 'rejected', 'timed_out', 'cancelled'}
 START_FIELDS = {'operation', 'program', 'language', 'script', 'parameters_file', 'args',
                 'stdin_file', 'input_paths', 'required_tools', 'encoding',
-                'artifacts', 'acceptance', 'expected_versions', 'workdir', 'previous_execution'}
+                'artifacts', 'acceptance', 'expected_versions', 'workdir', 'previous_execution',
+                'run_seconds', 'output_quota_bytes'}
 LOCATION_FIELDS = {'execution_id', 'cwd'}
 
 
@@ -141,11 +142,12 @@ class Server:
                 'program_not_configured')
         if not isinstance(form.get('args', []), list):
             raise Invalid('args_must_be_array')
+        options = execution_options(form, self.policy)
         # R2: normalize before hashing so semantically identical forms share
         # one identity (omitted args == [], raw workdir == resolved path,
         # explicit null == field absent). Plain argument strings keep meaning.
         content = {key: value for key, value in form.items()
-                   if key != 'previous_execution' and value is not None}
+                   if key != 'previous_execution' and key not in EXECUTION_OPTIONS and value is not None}
         content['args'] = content.get('args') or []
         content['workdir'] = str(cwd)
         content_fingerprint = digest(content)
@@ -195,6 +197,9 @@ class Server:
                         if key not in ('workdir', 'previous_execution')}
             business.update({'task_ref': task_ref, 'step_ref': step_ref, 'attempt': attempt,
                              'cwd': workdir, 'operation': operation})
+            # Resource changes are not another business intent. Freeze their
+            # effective values in this attempt; status/output keep its identity.
+            business.update(options)
             if previous_request:
                 business['previous_request'] = previous_request
             req = shape(business)
@@ -735,7 +740,7 @@ class Server:
 
 TOOLS = [
     {'name': 'start_operation',
-     'description': 'Start one business operation via a detached entry child. Form fields: operation (native/script/python_unittest), program, workdir, args, script, language, parameters_file, stdin_file, input_paths, required_tools, artifacts, acceptance, expected_versions, encoding, previous_execution. No timeout field: budgets come from policy. Same content while RUNNING dedups to the same id; after TERMINAL the same content is a new intent.',
+     'description': 'Start one business operation via a detached entry child. Optional run_seconds (integer 1..1800) and output_quota_bytes (integer 1024..16777216 per stream) override policy defaults. The deployment template defaults are 300 seconds and 1048576 bytes. Omit to use the installed policy. Resource changes never start a second copy of running business; query the existing id for its unchanged limits. Records stay at the configured workspace location.',
      'inputSchema': {'type': 'object',
                      'properties': {
                          'operation': {'type': 'string'}, 'program': {'type': 'string'},
@@ -746,6 +751,8 @@ TOOLS = [
                          'required_tools': {'type': 'array', 'items': {'type': 'string'}},
                          'artifacts': {'type': 'object'}, 'acceptance': {'type': 'array'},
                          'expected_versions': {'type': 'object'}, 'encoding': {'type': 'string'},
+                         'run_seconds': {'type': 'integer', 'minimum': 1, 'maximum': 1800},
+                         'output_quota_bytes': {'type': 'integer', 'minimum': 1024, 'maximum': 16777216},
                          'previous_execution': {'type': 'string'}},
                      'required': ['operation', 'program', 'workdir'], 'additionalProperties': False}},
     {'name': 'status',

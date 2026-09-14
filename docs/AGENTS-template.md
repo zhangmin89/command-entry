@@ -8,8 +8,12 @@ waiting go through the `command_entry_exec_server` MCP tools:
 
 - `start_operation` — one business operation. Required: `operation`
   (native/script/python_unittest), `program`, `workdir`. `program` is the
-  policy KEY (`"git"`, `"node"`), never an executable path. No timeout field:
-  budgets come from policy. `stdin_file` takes an absolute path; never
+  policy KEY (`"git"`, `"node"`), never an executable path. Optional integer
+  `run_seconds` (1..1800) and `output_quota_bytes` (1024..16777216 per stream)
+  override installed policy defaults (deployment template: 300 seconds and
+  1048576 bytes). Omit to use defaults; invalid values are rejected, not
+  clamped. There is no record-directory input: keep workspace records.
+  `stdin_file` takes an absolute path; never
   inline stdin. `previous_execution` starts a retry only when the bound
   inputs actually changed. Batch files (.cmd/.bat) are never whitelisted —
   run package scripts through the script operation instead, e.g. an npm
@@ -39,6 +43,9 @@ terminal state the same content is a new intent. An instance whose state is
 `unknown` is NOT terminal: a duplicate start is refused (`dedup_blocked`,
 the existing id is returned) until `cancel` confirms every known process is
 dead (a `cancel-outcome.json` sidecar; the record itself stays `unknown`).
+Changing only `run_seconds` or `output_quota_bytes` cannot start another
+copy of running/unconfirmed business or alter its existing limits. Query
+the returned execution ID; do not resubmit to retrieve output.
 `claim_pending_unconfirmed_retry_later` means another server instance holds
 an unfinished claim — retry the call later, never improvise a workaround.
 A retry requires

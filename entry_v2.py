@@ -12,7 +12,7 @@ import threading
 import time
 import uuid
 
-from common import VERSION, Invalid, digest, load_policy, matches_request, packed, read_json, request_digest, require, save, shape, write_new
+from common import VERSION, Invalid, digest, execution_options, load_policy, matches_request, packed, read_json, request_digest, require, save, shape, write_new
 from output_store import Capture, redact_line
 from v1_support import Job, syntax
 from windows_state import FileLocks, observe
@@ -107,10 +107,7 @@ def plan(req, policy, locks, directory):
     if 'stdin_file' in req:
         locks.add(business_path(req['stdin_file'], 'file'))
     op = req['operation']
-    definition = policy.get('operations', {}).get(op)
-    require(definition is not None and 'run_seconds' in definition, 'approved_run_budget_missing')
-    budget = definition['run_seconds']
-    require(type(budget) in (int,float) and 0 < budget <= 3600, 'invalid_approved_budget')
+    budget = execution_options(req, policy)['run_seconds']
     program = policy.get('programs', {}).get(req.get('program'))
     require(program is not None, 'program_not_configured')
     executable = str(business_path(program['path'], 'file'))
@@ -292,7 +289,9 @@ def run(request_path, policy_path):
                         return
         try:
             argv, budget, checked = plan(req, policy, locks, directory)
-            result.update(argv=argv, bindings=dict(locks.bindings), syntax=checked, run_budget_seconds=budget)
+            output_quota = execution_options(req, policy)['output_quota_bytes']
+            result.update(argv=argv, bindings=dict(locks.bindings), syntax=checked,
+                          run_budget_seconds=budget, output_quota_bytes=output_quota)
             if req['attempt']:
                 old = snapshot(base/execution_id(req['previous_request']))
                 require(old.get('logical_id') == req['logical_id'] and old['state'] in ('rejected','exited','timed_out','cancelled'), 'previous_attempt_not_confirmed_terminal')
@@ -307,7 +306,7 @@ def run(request_path, policy_path):
             host = subprocess.Popen([sys.executable,'-X','utf8',str(ROOT/'worker_v2.py')],cwd=cwd,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,shell=False)
             job.assign(host)
             for name in ('stdout','stderr'):
-                capture[name] = Capture(directory/(name+'.txt'), req.get('encoding','utf-8'), policy['output_quota_bytes'])
+                capture[name] = Capture(directory/(name+'.txt'), req.get('encoding','utf-8'), output_quota)
                 capture[name].start(getattr(host,name))
             result.update(state='running', worker=observe(host.pid))
             persist()

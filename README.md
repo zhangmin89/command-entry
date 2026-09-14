@@ -31,6 +31,48 @@ Python 3.14 + PowerShell 7 only. Development plan: `pure-beta-dev-plan.md`
 - `policy.json` — deployment policy template.
 - `tests/` — unittest suites; `scripts/` — stage smoke tests.
 
+## Per-call execution limits
+
+`start_operation` accepts two optional integer fields for native programs,
+scripts and Python unittest operations:
+
+| Field | Deployment template default | Inclusive per-call range |
+| --- | --- | --- |
+| `run_seconds` | 300 seconds (5 minutes) | 1..1800 seconds (30 minutes) |
+| `output_quota_bytes` | 1048576 bytes (1 MiB), each stream | 1024..16777216 bytes (16 MiB), each stream |
+
+Omitting a field uses the installed policy's value. Explicit null, booleans,
+strings, fractional values and out-of-range values are rejected before the
+server claims or starts an execution. Values are never silently clamped.
+The server saves the effective values in the request; the entry validates
+them again and reports `run_budget_seconds` and `output_quota_bytes` in
+status. This does not change approval, sandbox, program or path rules.
+
+Example additions to a normal start form:
+`"run_seconds": 900, "output_quota_bytes": 4194304`.
+
+These options do not participate in the business dedup fingerprint. While
+the same business is running or unconfirmed, changing resource values does
+not launch it again or resize it: the existing execution ID is returned.
+Read its status/output. After confirmed termination, a new explicit intent
+can use different values. Lineage retry still requires changed bound inputs;
+changing a budget alone does not satisfy that rule.
+
+There is no per-call record-directory field. The template continues to use
+`<workdir>/.codex-command-records`; no additional location is installed.
+Wait/poll and cleanup limits are separate and unchanged. Output paging reads
+retained data only; it does not enlarge a quota or re-execute business.
+Existing redaction, decoding-loss reporting and the 16384-character
+single-line capture guard remain: a larger quota does not promise lossless
+output for every possible line.
+
+This source change does not update an installed policy or binding. For the
+new defaults, the user must update each execution operation's `run_seconds`
+to 300 and `output_quota_bytes` to 1048576 in the deployed policy, preserving
+all unrelated fields, then deploy the reviewed code and re-pin the binding.
+Do not replace a deployed policy with the repository template (which has
+placeholder working roots). Reload the server to expose the new MCP schema.
+
 ## stdin_file (restored, plan stage 1)
 
 `stdin_file` is an absolute path to a file wired into the business child's

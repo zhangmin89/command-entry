@@ -15,11 +15,11 @@
     "rg": {"kind": "native", "path": "C:\\Users\\zhang\\.codex\\command-entry\\rg.exe"}
   },
   "operations": {
-    "native": {"acceptable_exit_codes": [0], "run_seconds": 60, "wait_category": "long_task"},
-    "python_unittest": {"acceptable_exit_codes": [0], "run_seconds": 60, "wait_category": "long_task"},
-    "script": {"acceptable_exit_codes": [0], "run_seconds": 60, "wait_category": "long_task"}
+    "native": {"acceptable_exit_codes": [0], "run_seconds": 300, "wait_category": "long_task"},
+    "python_unittest": {"acceptable_exit_codes": [0], "run_seconds": 300, "wait_category": "long_task"},
+    "script": {"acceptable_exit_codes": [0], "run_seconds": 300, "wait_category": "long_task"}
   },
-  "output_quota_bytes": 65536,
+  "output_quota_bytes": 1048576,
   "read_quota_bytes": 65536,
   "cleanup_seconds": 10,
   "wait_budget_seconds": 30,
