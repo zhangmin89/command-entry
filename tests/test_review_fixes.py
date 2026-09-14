@@ -7,6 +7,7 @@ R8 read_roots=[] deny-all, R9 budget_exhausted real observation,
 R10 rejected-log reason codes.
 """
 import json
+import os
 import sys
 import tempfile
 import time
@@ -106,7 +107,7 @@ class ProgramHealthTests(unittest.TestCase):
         policy_path.write_text(json.dumps(policy), encoding='utf-8')
         before = policy_path.read_bytes()
         instance = server_module.Server(policy_path)
-        self.assertEqual(instance.check_programs(), {'missing': [], 'healed': []})
+        self.assertEqual(instance.check_programs(), {'missing': [], 'healed': [], 'missing_env': []})
         self.assertEqual(target.read_bytes(), b'configured file')
         self.assertEqual(policy_path.read_bytes(), before)
 
@@ -124,6 +125,54 @@ class ProgramHealthTests(unittest.TestCase):
                    if json.loads(line).get('kind') == 'startup'][-1]
         self.assertEqual(startup['program_health']['missing'], ['rg'])
         self.assertEqual(startup['program_health']['healed'], [])
+
+    def test_startup_reports_dotnet_environment_without_modifying_it(self):
+        for value, missing in ((None, ['PROCESSOR_ARCHITECTURE']),
+                               ('', ['PROCESSOR_ARCHITECTURE']), ('AMD64', [])):
+            with self.subTest(value=value):
+                tmp = Path(tempfile.mkdtemp(prefix='health-dotnet-env '))
+                dotnet = tmp / 'dotnet.exe'
+                dotnet.write_bytes(b'health-check fixture; never executed')
+                program = {'kind': 'native', 'path': str(dotnet)}
+                _, policy_path = make_policy(tmp, programs={'sdk': program, 'sdk_alias': program})
+                before_policy = policy_path.read_bytes()
+                environment = dict(os.environ)
+                environment.pop('PROCESSOR_ARCHITECTURE', None)
+                if value is not None:
+                    environment['PROCESSOR_ARCHITECTURE'] = value
+                with mock.patch.dict(os.environ, environment, clear=True), \
+                        mock.patch.object(server_module.subprocess, 'Popen') as spawn:
+                    instance = server_module.Server(policy_path)
+                    self.assertTrue(dict(os.environ) == environment,
+                                    'Startup changed environment variables')
+                spawn.assert_not_called()
+                event = json.loads((instance.log_root / 'server-events.jsonl').read_text(encoding='utf-8'))
+                self.assertEqual(event['kind'], 'startup')
+                self.assertEqual(event['program_health'],
+                                 {'missing': [], 'healed': [], 'missing_env': missing})
+                self.assertEqual(policy_path.read_bytes(), before_policy)
+
+    def test_startup_without_dotnet_does_not_report_its_environment(self):
+        tmp = Path(tempfile.mkdtemp(prefix='health-no-dotnet-env '))
+        _, policy_path = make_policy(tmp)
+        environment = dict(os.environ)
+        environment.pop('PROCESSOR_ARCHITECTURE', None)
+        with mock.patch.dict(os.environ, environment, clear=True):
+            instance = server_module.Server(policy_path)
+        event = json.loads((instance.log_root / 'server-events.jsonl').read_text(encoding='utf-8'))
+        self.assertEqual(event['program_health']['missing_env'], [])
+
+    def test_missing_dotnet_file_and_environment_are_reported_together(self):
+        tmp = Path(tempfile.mkdtemp(prefix='health-dotnet-missing '))
+        _, policy_path = make_policy(tmp, programs={
+            'sdk': {'kind': 'native', 'path': str(tmp / 'dotnet.exe')}})
+        environment = dict(os.environ)
+        environment.pop('PROCESSOR_ARCHITECTURE', None)
+        with mock.patch.dict(os.environ, environment, clear=True):
+            instance = server_module.Server(policy_path)
+        event = json.loads((instance.log_root / 'server-events.jsonl').read_text(encoding='utf-8'))
+        self.assertEqual(event['program_health'], {'missing': ['sdk'], 'healed': [],
+                                                 'missing_env': ['PROCESSOR_ARCHITECTURE']})
 
 
 class ClaimProtocolTests(unittest.TestCase):

@@ -12,7 +12,8 @@
     "node": {"kind": "javascript", "path": "C:\\nvm4w\\nodejs\\node.exe"},
     "powershell": {"kind": "powershell", "path": "C:\\Program Files\\PowerShell\\7\\pwsh.exe"},
     "python": {"kind": "python", "path": "C:\\Users\\zhang\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe"},
-    "rg": {"kind": "native", "path": "C:\\Users\\zhang\\.codex\\command-entry\\rg.exe"}
+    "rg": {"kind": "native", "path": "C:\\Users\\zhang\\.codex\\command-entry\\rg.exe"},
+    "impeccable": {"kind": "native","path": "C:\\Users\\zhang\\.impeccable\\bin\\0.1.5\\impeccable.exe"}
   },
   "operations": {
     "native": {"acceptable_exit_codes": [0], "run_seconds": 300, "wait_category": "long_task"},

@@ -10,6 +10,7 @@ import argparse
 import contextlib
 import hashlib
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -21,7 +22,7 @@ from common import (EXECUTION_OPTIONS, Invalid, digest, execution_options, load_
 import adapter
 import entry_v2
 import wait_state
-from windows_state import (FileMutex, observe, spawn_creation_flags,
+from windows_state import (FileLocks, FileMutex, observe, spawn_creation_flags,
                            terminate_if_same_instance)
 
 VERSION = 'pure-beta.server.3'
@@ -59,9 +60,12 @@ def strict_decodable(raw, encoding):
 class Server:
     def __init__(self, policy_path, binding_path=None):
         self.policy_path = Path(policy_path).resolve()
-        self.policy = load_policy(self.policy_path)
-        if binding_path:
-            self.verify_binding(binding_path)
+        with FileLocks() as locks:
+            locks.add(self.policy_path)
+            self.policy = load_policy(self.policy_path)
+            self.policy_sha256 = locks.bindings[str(self.policy_path)]
+            if binding_path:
+                self.verify_binding(binding_path)
         self.serve_root = Path(self.policy['serve_root']).resolve()
         self.serve_root.mkdir(parents=True, exist_ok=True)
         self.log_root = Path(self.policy.get('log_root') or (self.policy_path.parent / 'logs')).resolve()
@@ -72,18 +76,23 @@ class Server:
                        program_health=self.check_programs())
 
     def check_programs(self):
-        """Report missing configured files without copying or changing policy.
+        """Report missing files and dotnet environment without changing either.
 
         File existence is not a runtime health check. Recovery requires a
         separately reviewed source; no such source is configured here.
         Keep 'healed' empty for compatibility with existing startup logs.
         """
-        report = {'missing': [], 'healed': []}
+        report = {'missing': [], 'healed': [], 'missing_env': []}
         for name, item in self.policy.get('programs', {}).items():
             path = Path(item.get('path', ''))
             if path.is_file():
                 continue
             report['missing'].append(name)
+        dotnet_configured = any(
+            item.get('kind') == 'native' and Path(item.get('path', '')).name.lower() == 'dotnet.exe'
+            for item in self.policy.get('programs', {}).values())
+        if dotnet_configured and not os.environ.get('PROCESSOR_ARCHITECTURE'):
+            report['missing_env'].append('PROCESSOR_ARCHITECTURE')
         return report
 
     def verify_binding(self, binding_path):
@@ -92,14 +101,14 @@ class Server:
         require(binding.get('schema_version') == 2, 'binding_version_required')
         require(str(Path(binding['policy']['path']).resolve()).lower() == str(self.policy_path).lower(),
                 'binding_policy_path_mismatch')
-        require(hashlib.sha256(self.policy_path.read_bytes()).hexdigest() == binding['policy']['sha256'],
+        require(self.policy_sha256 == binding['policy']['sha256'],
                 'policy_changed_since_review')
         for item in binding['runtime_files']:
             require(hashlib.sha256(Path(item['path']).read_bytes()).hexdigest() == item['sha256'],
                     'runtime_changed_since_review_' + Path(item['path']).name)
 
     def log_event(self, kind, **fields):
-        """Envelope-only diagnostics; never parameters, results or paths of calls."""
+        """Envelope diagnostics and corrupt record paths; never business parameters or results."""
         try:
             self.log_root.mkdir(parents=True, exist_ok=True)
             with (self.log_root / 'server-events.jsonl').open('a', encoding='utf-8') as stream:
@@ -113,11 +122,35 @@ class Server:
     def context(self, cwd):
         return entry_v2.context(self.policy, cwd)
 
+    def read_request(self, path):
+        try:
+            envelope = read_json(path)
+            require(isinstance(envelope, dict), 'request_envelope_object_required')
+            return envelope
+        except (ValueError, OSError) as error:
+            raise Invalid('request_record_unreadable: ' + str(path) +
+                          ' (' + type(error).__name__ + ')') from error
+
+    def request_history(self, *, strict=False):
+        for path in self.serve_root.glob('*/request.json'):
+            try:
+                envelope = self.read_request(path)
+                if strict:
+                    require(isinstance(envelope.get('content_fingerprint'), str) and
+                            bool(envelope['content_fingerprint']),
+                            'request_fingerprint_missing: ' + str(path))
+            except Invalid as error:
+                self.log_event('request_record_unreadable', file=str(path), reason=str(error))
+                if strict:
+                    raise
+                continue
+            yield path, envelope
+
     def locate(self, execution_id):
         require(str(uuid.UUID(execution_id)) == execution_id, 'execution_id_required')
         entry = self.serve_root / execution_id / 'request.json'
         require(entry.is_file(), 'execution_not_found')
-        business = read_json(entry)['business']
+        business = self.read_request(entry)['business']
         directory = self.context(Path(business['cwd']).resolve()) / execution_id
         return directory, business['cwd']
 
@@ -152,6 +185,13 @@ class Server:
         content['workdir'] = str(cwd)
         content_fingerprint = digest(content)
 
+        # Check and consume the same bytes. A reviewed policy is immutable
+        # for this server's lifetime, including calls without a binding file.
+        policy_raw = self.policy_path.read_bytes()
+        require(hashlib.sha256(policy_raw).hexdigest() == self.policy_sha256,
+                'policy_changed_since_review')
+        policy_snapshot = json.loads(policy_raw.decode('utf-8-sig'))
+
         # R1 v2: ONE exclusive critical section per fingerprint covering
         # classify -> assign -> publish. A stale-terminal claim can only be
         # re-taken inside this section, so two instances can never assign
@@ -160,7 +200,7 @@ class Server:
             if outcome == 'pending':
                 raise Invalid('claim_pending_unconfirmed_retry_later')
             if outcome == 'existing':
-                existing_record = self.context(Path(read_json(
+                existing_record = self.context(Path(self.read_request(
                     self.serve_root / claimed_id / 'request.json')['business']['cwd']).resolve()) / claimed_id
                 existing_state = self.snapshot(existing_record) if existing_record.is_dir() \
                     else {'state': 'unknown', 'reason': 'record_missing'}
@@ -189,8 +229,8 @@ class Server:
                     form['previous_execution'], content_fingerprint)
                 attempt = origin_attempt + 1
             else:
-                seq = 1 + sum(1 for path in self.serve_root.glob('*/request.json')
-                              if read_json(path).get('content_fingerprint') == content_fingerprint)
+                seq = 1 + sum(1 for _, envelope in self.request_history()
+                              if envelope.get('content_fingerprint') == content_fingerprint)
                 task_ref, step_ref, previous_request = 'mcp-direct', content_fingerprint[:12] + '-' + str(seq), None
                 attempt = 0
             business = {key: value for key, value in form.items()
@@ -215,19 +255,37 @@ class Server:
                 # A record with this identity already exists (legacy or a
                 # same-seq winner). Re-point the claim and classify it.
                 rival = self.find_execution_by_fingerprint(content_fingerprint)
-                require(rival is not None, 'serve_dir_collision_without_match')
+                require(rival is not None, 'serve_dir_collision_without_match: ' + str(directory))
                 save(claim_dir / 'claim.json', {'execution_id': rival,
                                                 'republished_at_unix': time.time()})
                 return self.classify_existing(rival)
             envelope = {'schema_version': 2, 'business': business,
                         'fingerprint': request_digest(req),
                         'content_fingerprint': content_fingerprint}
-            write_new(directory / 'request.json', envelope)
-            write_new(directory / 'policy.json', json.loads(self.policy_path.read_text(encoding='utf-8-sig')))
-            # Publish the identity into the claim INSIDE the section: the
-            # next claimant only sees a fully assigned identity.
-            save(claim_dir / 'claim.json', {'execution_id': execution_id,
-                                            'published_at_unix': time.time()})
+            publication_path = directory / 'request.json'
+            try:
+                write_new(publication_path, envelope)
+                publication_path = directory / 'policy.json'
+                write_new(publication_path, policy_snapshot)
+                # Publish the identity INSIDE the section. No child exists yet.
+                publication_path = claim_dir / 'claim.json'
+                save(publication_path, {'execution_id': execution_id,
+                                        'published_at_unix': time.time()})
+            except (OSError, ValueError, TypeError) as error:
+                # Repair only our unpublished identity, including a partial
+                # request write. Preserve the failure instead of erasing history.
+                save(directory / 'request.json', envelope)
+                detail = {'kind': type(error).__name__,
+                          'reason': str(publication_path) + ': ' + str(error)[:300]}
+                write_new(directory / 'serve-error.json',
+                          {'schema_version': 2, 'state': 'not_started',
+                           'execution_id': execution_id, 'error': detail})
+                return {'execution_id': execution_id, 'request_id': req['request_id'],
+                        'state': 'start_failed', 'in_flight_dedup': False,
+                        'orphan_guaranteed': self.orphan_guaranteed,
+                        'record_dir': str(self.context(cwd) / execution_id),
+                        'serve_error': {'error': detail},
+                        'note': 'Input publication failed before spawning; the failure is queryable via status.'}
         # Section released; spawning happens outside the lock.
 
         record_dir = self.context(cwd) / execution_id
@@ -279,7 +337,7 @@ class Server:
 
     def classify_existing(self, execution_id):
         """Second look at an already-claimed execution (R1/R3 semantics)."""
-        business = read_json(self.serve_root / execution_id / 'request.json')['business']
+        business = self.read_request(self.serve_root / execution_id / 'request.json')['business']
         record = self.context(Path(business['cwd']).resolve()) / execution_id
         state = self.snapshot(record) if record.is_dir() else {'state': 'unknown', 'reason': 'record_missing'}
         state_name = state['state']
@@ -288,14 +346,11 @@ class Server:
                 'in_flight_dedup': not blocked, 'dedup_blocked': blocked,
                 'orphan_guaranteed': self.orphan_guaranteed, 'record_dir': str(record)}
 
-    def find_execution_by_fingerprint(self, content_fingerprint):
+    def find_execution_by_fingerprint(self, content_fingerprint, *, strict=False):
         """Newest serve record carrying this content fingerprint, if any."""
         best = None
-        for path in self.serve_root.glob('*/request.json'):
-            try:
-                if read_json(path).get('content_fingerprint') != content_fingerprint:
-                    continue
-            except (ValueError, OSError):
+        for path, envelope in self.request_history(strict=strict):
+            if envelope.get('content_fingerprint') != content_fingerprint:
                 continue
             if best is None or path.stat().st_mtime > best.stat().st_mtime:
                 best = path
@@ -328,7 +383,34 @@ class Server:
         try:
             claim_file = claim_dir / 'claim.json'
             if claim_file.is_file():
-                yield ('existing', read_json(claim_file)['execution_id'], claim_dir)
+                try:
+                    claim = read_json(claim_file)
+                    require(isinstance(claim, dict) and
+                            isinstance(claim.get('execution_id'), str),
+                            'claim_execution_id_required')
+                    claimed = claim['execution_id']
+                    require(str(uuid.UUID(claimed)) == claimed, 'claim_execution_id_required')
+                except ValueError as error:
+                    reason = 'claim_record_unreadable: ' + str(claim_file)
+                    self.log_event('claim_record_unreadable', file=str(claim_file),
+                                   reason=type(error).__name__)
+                    # A skipped request could hide a newer live execution.
+                    # Only heal a damaged claim from complete readable history.
+                    try:
+                        claimed = self.find_execution_by_fingerprint(content_fingerprint, strict=True)
+                        require(claimed is not None, 'claim_recovery_identity_missing')
+                        require(str(uuid.UUID(claimed)) == claimed, 'claim_execution_id_required')
+                        save(claim_file, {'execution_id': claimed, 'healed_at_unix': time.time()})
+                    except (ValueError, OSError) as recovery_error:
+                        raise Invalid(reason + ' (recovery failed: ' + str(recovery_error) + ')') \
+                            from recovery_error
+                except OSError as error:
+                    reason = 'claim_record_unreadable: ' + str(claim_file)
+                    self.log_event('claim_record_unreadable', file=str(claim_file),
+                                   reason=type(error).__name__)
+                    raise Invalid(reason + ' (' + type(error).__name__ + ')') from error
+                # Never catch errors raised by the caller's with-block.
+                yield ('existing', claimed, claim_dir)
             else:
                 healed = self.find_execution_by_fingerprint(content_fingerprint)
                 if healed:
@@ -353,7 +435,7 @@ class Server:
         require(str(uuid.UUID(execution_id)) == execution_id, 'execution_id_required')
         entry = self.serve_root / execution_id / 'request.json'
         require(entry.is_file(), 'previous_execution_not_found')
-        envelope = read_json(entry)
+        envelope = self.read_request(entry)
         origin = shape(envelope['business'])
         require(envelope.get('content_fingerprint') == content_fingerprint,
                 'previous_execution_content_mismatch')

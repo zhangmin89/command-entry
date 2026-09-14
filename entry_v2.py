@@ -121,6 +121,9 @@ def plan(req, policy, locks, directory):
         # & | % ^ would escape the whitelist entirely (BatBadBut class).
         require(executable.lower().endswith('.exe'),
                 'native_requires_exe_batch_files_route_through_cmd')
+        if Path(executable).name.lower() == 'dotnet.exe' and args == ['--info']:
+            require(os.environ.get('PROCESSOR_ARCHITECTURE'),
+                    'dotnet_environment_missing: PROCESSOR_ARCHITECTURE')
         argv = [executable,*args]
     elif op == 'python_unittest':
         require(program['kind'] == 'python', 'python_runtime_required')
