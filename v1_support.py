@@ -80,7 +80,7 @@ def syntax(req):
     commands={'python':[exe,'-I','-X','utf8',str(ROOT/'check_python.py'),script],
               'powershell':[exe,'-NoProfile','-File',str(ROOT/'check_powershell.ps1'),'-ScriptPath',script],
               'javascript':[exe,'--check',script], 'bash':[exe,'-n',script]}
-    p=subprocess.Popen(commands[lang],cwd=req['cwd'],stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE,shell=False)
+    p=subprocess.Popen(commands[lang],cwd=req['cwd'],stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE,shell=False,creationflags=subprocess.CREATE_NO_WINDOW)
     out=Capture(p.stdout,8192);err=Capture(p.stderr,8192)
     try:p.wait(timeout=10)
     except subprocess.TimeoutExpired:p.kill();p.wait(timeout=10)

@@ -20,7 +20,8 @@ def main():
         raise ValueError('owner_handshake_required')
     incoming = open(plan['stdin_file'], 'rb') if plan.get('stdin_file') else subprocess.DEVNULL
     try:
-        process = subprocess.Popen(plan['argv'], cwd=plan['cwd'], stdin=incoming, shell=False)
+        process = subprocess.Popen(plan['argv'], cwd=plan['cwd'], stdin=incoming, shell=False,
+                                   creationflags=subprocess.CREATE_NO_WINDOW)
         save(Path(plan['record_dir'])/'business-process.json', observe(process.pid))
         return process.wait()
     finally:

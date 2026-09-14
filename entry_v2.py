@@ -303,7 +303,7 @@ def run(request_path, policy_path):
             result['state'] = 'starting'
             persist()
             job = Job()
-            host = subprocess.Popen([sys.executable,'-X','utf8',str(ROOT/'worker_v2.py')],cwd=cwd,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,shell=False)
+            host = subprocess.Popen([sys.executable,'-X','utf8',str(ROOT/'worker_v2.py')],cwd=cwd,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,shell=False,creationflags=subprocess.CREATE_NO_WINDOW)
             job.assign(host)
             for name in ('stdout','stderr'):
                 capture[name] = Capture(directory/(name+'.txt'), req.get('encoding','utf-8'), output_quota)
