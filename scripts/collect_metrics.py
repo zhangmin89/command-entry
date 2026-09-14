@@ -41,7 +41,9 @@ def collect(records_dir, events_file, serve_dir):
             'deny_rate': round((shell_denied + invalid_denied) / total_hook, 4) if total_hook else None,
         },
         'server': {
-            'restarts': sum(1 for e in events if e.get('kind') == 'startup'),
+            # R10: startup events include the first start and multi-instance
+            # starts; they are NOT proven restarts. Keep the raw count honest.
+            'startup_events': sum(1 for e in events if e.get('kind') == 'startup'),
             'start_calls': len(starts),
             'in_flight_dedup_hits': sum(1 for e in starts if e.get('dedup')),
             'retries': sum(1 for e in starts if e.get('retry')),

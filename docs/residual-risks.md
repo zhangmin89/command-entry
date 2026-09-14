@@ -25,6 +25,25 @@ accepted per plan §2.
   (rename-safe); reads spanning concurrent in-place modifications are not
   globally consistent and the metadata says so.
 
+## Accepted property: the stdio channel is serial
+
+The exec server processes MCP requests one at a time over its stdio
+connection. A blocking `wait` (up to `wait_budget_seconds`, default 30s)
+occupies the connection: any `status` / `cancel` / `read_text` issued on
+the SAME connection during that window queues behind it. This is not
+mitigated by "the model cannot do anything else while waiting" — concurrent
+queries on one connection still queue. Each Codex session spawns its own
+server instance, so cross-session work is unaffected. Accepted for now;
+revisit only if observation-week data shows real contention.
+
+## binding.json is a deployment artifact
+
+binding.json pins absolute paths and hashes of one machine's file set. It is
+NOT source: every machine rebuilds it locally with
+`scripts/build_binding.py` after any code/policy change. It is excluded
+from git tracking (`git rm --cached` + .gitignore); the local file is kept,
+never synced between machines.
+
 ## working_roots narrowing (this stage's debt payment)
 
 The deployed policy must narrow `working_roots` from the template's drive

@@ -85,6 +85,12 @@ already-open desktop/IDE sessions must be restarted before verification.
 The sentinel denies every shell/exec_command call and points to the exec
 server tools. It reads no binding and never stores command content.
 
+Note: `hook_v2.py` is deliberately NOT in binding.json's runtime_files.
+Its integrity rests on two other layers — the install root sits outside
+every working_root (the model cannot write to it), and Codex forces
+re-trust on any hooks.json definition change. This is by design, not an
+omission.
+
 ### Approval differentiation
 
 - MCP server `command_entry_exec_server`: pre-trust once per session startup.
@@ -99,7 +105,10 @@ shell always prompts on top of the hook deny.
 
 read_roots was already implemented with the server (stage 2). On switch day:
 
-1. Deploy policy with explicit `read_roots` (default = working_roots set).
+1. Decide `read_roots`: **`null` is an allowed state** — the server falls
+   back to `working_roots` (verified in the field: out-of-roots reads get a
+   structured `file_outside_read_roots` rejection). Set an explicit value
+   only to tighten reads beyond the working_roots set.
 2. Register the server + hook, trust the hook in `/hooks`.
 3. Enable pre-trust for the server; set shell to untrusted.
 4. Restart Codex; verify: raw shell -> deny + pointer; read outside

@@ -26,5 +26,7 @@
   "wait_poll_interval_seconds": 5,
   "wait_stop_after_no_progress": 12,
   "cancel_grace_seconds": 15,
+  "cancel_confirm_seconds": 10,
+  "claim_timeout_seconds": 120,
   "require_orphan_guarantee": false
 }

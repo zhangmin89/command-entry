@@ -23,11 +23,19 @@ waiting go through the `command_entry_exec_server` MCP tools:
 - `read_text` — stateless range read (`file`, `start_line`, `max_lines`,
   optional `encoding`). Complete coverage metadata is returned; continue
   with `next_start_line`; strict decoding, no silent truncation.
+  `total_lines` is null unless the scan reached end of file — check
+  `total_lines_known` instead of estimating.
 
 ## Identity and retries
 
 Same content while still RUNNING dedups to the same execution id. After a
-terminal state the same content is a new intent. A retry requires
+terminal state the same content is a new intent. An instance whose state is
+`unknown` is NOT terminal: a duplicate start is refused (`dedup_blocked`,
+the existing id is returned) until `cancel` confirms every known process is
+dead (a `cancel-outcome.json` sidecar; the record itself stays `unknown`).
+`claim_pending_unconfirmed_retry_later` means another server instance holds
+an unfinished claim — retry the call later, never improvise a workaround.
+A retry requires
 `previous_execution` with **identical business content**: the form
 (operation, program, args, bound paths) must match the previous attempt's
 content fingerprint exactly, otherwise the server rejects with

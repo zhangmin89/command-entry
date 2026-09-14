@@ -114,15 +114,15 @@ class MetricsTests(unittest.TestCase):
         result = collect_metrics.collect(records, events, serve)
         self.assertEqual(result['hook']['shell_denied'], 2)
         self.assertEqual(result['hook']['deny_rate'], 0.75)
-        self.assertEqual(result['server']['restarts'], 2)
+        self.assertEqual(result['server']['startup_events'], 2)
         self.assertEqual(result['server']['in_flight_dedup_hits'], 1)
         self.assertEqual(result['server']['retries'], 1)
         self.assertEqual(result['executions']['serve_inputs'], 1)
 
 
 class UpdatePolicySmoke(unittest.TestCase):
-    def test_add_program_repins_binding(self):
-        tmp = Path(tempfile.mkdtemp(prefix='stage5-updatepolicy '))
+    def make_repo(self, prefix):
+        tmp = Path(tempfile.mkdtemp(prefix=prefix))
         repo = tmp / 'repo'
         repo.mkdir()
         for name in build_binding.RUNTIME_FILES:
@@ -133,11 +133,23 @@ class UpdatePolicySmoke(unittest.TestCase):
         shutil.copy(ROOT / 'update-policy.ps1', repo / 'update-policy.ps1')
         policy = base_policy(serve_root=str(tmp / 'serve'))
         (repo / 'policy.json').write_text(json.dumps(policy), encoding='utf-8')
+        subprocess.run([sys.executable, '-X', 'utf8', str(repo / 'scripts' / 'build_binding.py'),
+                        '--policy', str(repo / 'policy.json'), '--out', str(repo / 'binding.json')],
+                       check=True, capture_output=True)
+        return repo
+
+    def hashes(self, repo):
+        import hashlib
+        return {name: hashlib.sha256((repo / name).read_bytes()).hexdigest()
+                for name in ('policy.json', 'binding.json')}
+
+    def test_add_program_repins_binding(self):
+        repo = self.make_repo('stage5-updatepolicy ')
         completed = subprocess.run(
             ['pwsh', '-NoProfile', '-File', str(repo / 'update-policy.ps1'),
              '-RepoRoot', str(repo), '-AddProgram', 'git',
              '-ProgramPath', r'C:\Program Files\Git\cmd\git.exe', '-Kind', 'native'],
-            capture_output=True, text=True, encoding='utf-8', timeout=120)
+            capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=120)
         self.assertEqual(completed.returncode, 0, completed.stderr)
         updated = json.loads((repo / 'policy.json').read_text(encoding='utf-8'))
         self.assertIn('git', updated['programs'])
@@ -146,6 +158,34 @@ class UpdatePolicySmoke(unittest.TestCase):
         # The freshly pinned server must start against the new anchor.
         instance = server_module.Server(repo / 'policy.json', repo / 'binding.json')
         self.assertIn('git', instance.policy['programs'])
+
+    def test_missing_program_path_leaves_live_pair_untouched(self):
+        # R4: pre-commit failure must not touch policy.json/binding.json.
+        repo = self.make_repo('stage5-policy-fail-path ')
+        before = self.hashes(repo)
+        completed = subprocess.run(
+            ['pwsh', '-NoProfile', '-File', str(repo / 'update-policy.ps1'),
+             '-RepoRoot', str(repo), '-AddProgram', 'ghost',
+             '-ProgramPath', r'X:\definitely-missing.exe', '-Kind', 'native'],
+            capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=120)
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertEqual(self.hashes(repo), before)
+
+    def test_invalid_candidate_leaves_live_pair_untouched(self):
+        # R4: validation failure happens before any live write or backup.
+        repo = self.make_repo('stage5-policy-fail-validate ')
+        before = self.hashes(repo)
+        candidate = repo.parent / 'bad-candidate.json'
+        bad = base_policy(serve_root=str(repo.parent / 'serve'),
+                          operations={'native': {'run_seconds': 0}})
+        candidate.write_text(json.dumps(bad), encoding='utf-8')
+        completed = subprocess.run(
+            ['pwsh', '-NoProfile', '-File', str(repo / 'update-policy.ps1'),
+             '-RepoRoot', str(repo), '-PolicyPath', str(candidate)],
+            capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=120)
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIn('validation failed', completed.stdout + completed.stderr)
+        self.assertEqual(self.hashes(repo), before)
 
 
 if __name__ == '__main__':

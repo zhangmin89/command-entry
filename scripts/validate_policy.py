@@ -46,11 +46,16 @@ def validate(policy):
                            ('cleanup_seconds', 0, 600),
                            ('wait_budget_seconds', 1, 300),
                            ('wait_poll_interval_seconds', 1, 60),
-                           ('cancel_grace_seconds', 1, 120)):
+                           ('cancel_grace_seconds', 1, 120),
+                           ('cancel_confirm_seconds', 1, 60),
+                           ('claim_timeout_seconds', 10, 3600),
+                           ('wait_stop_after_no_progress', 2, 100)):
         value = policy.get(key, low)
         need(type(value) is int and low <= value <= high, key + '_out_of_range')
     need(isinstance(policy.get('require_orphan_guarantee', False), bool),
          'require_orphan_guarantee_must_be_bool')
+    # R8: an explicit [] is VALID and means deny-all reads; only null/absent
+    # inherits working_roots. The validator must not confuse the two.
     roots = policy.get('read_roots')
     need(roots is None or (isinstance(roots, list) and all(isinstance(r, str) for r in roots)),
          'read_roots_invalid')
