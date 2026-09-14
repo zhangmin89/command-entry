@@ -495,6 +495,20 @@ class Server:
                             'observation': observed}
                 time.sleep(min(interval, remaining))
 
+    def read_roots(self):
+        """Effective read_text roots: null inherits working_roots; [] denies
+        all; '@working_roots' expands the working_roots list in place."""
+        configured = self.policy.get('read_roots')
+        if configured is None:
+            return list(self.policy['working_roots'])
+        roots = []
+        for item in configured:
+            if item == '@working_roots':
+                roots.extend(self.policy['working_roots'])
+            else:
+                roots.append(item)
+        return roots
+
     # ---------- read_text (plan 0.4, A1; R6/R7 streaming) ----------
 
     LINE_ENDINGS = ('\n', '\r', '\x0b', '\x0c', '\x1c', '\x1d', '\x1e',
@@ -508,9 +522,9 @@ class Server:
         require(isinstance(target, str) and target, 'file_required')
         path = Path(target).resolve(strict=True)
         # R8: an explicit [] means deny-all; only a missing/null key inherits
-        # working_roots. Never silently widen an explicit restriction.
-        configured_roots = self.policy.get('read_roots')
-        roots = self.policy['working_roots'] if configured_roots is None else configured_roots
+        # working_roots. The '@working_roots' token expands in place, so an
+        # explicit list can mean "inherit plus extras" without duplication.
+        roots = self.read_roots()
         require(any(path == Path(root).resolve() or path.is_relative_to(Path(root).resolve())
                     for root in roots), 'file_outside_read_roots')
         require(path.is_file(), 'file_not_found')

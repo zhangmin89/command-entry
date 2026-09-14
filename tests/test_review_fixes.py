@@ -349,6 +349,25 @@ class StreamingReadTextTests(unittest.TestCase):
         finally:
             self.server.policy['read_roots'] = None
 
+    def test_working_roots_placeholder_expands(self):
+        # '@working_roots' = inherit plus extras, without duplicating the list.
+        inside = self.tmp / 'inside.txt'
+        inside.write_bytes(b'data\n')
+        extra_dir = Path(tempfile.mkdtemp(prefix='review-extra-root '))
+        extra = extra_dir / 'extra.txt'
+        extra.write_bytes(b'extra\n')
+        outside = Path(tempfile.mkdtemp(prefix='review-outside-root ')) / 'out.txt'
+        outside.write_bytes(b'out\n')
+        self.server.policy['read_roots'] = ['@working_roots', str(extra_dir)]
+        try:
+            self.assertEqual(self.read(file=str(inside))['text'], 'data\n')
+            self.assertEqual(self.read(file=str(extra))['text'], 'extra\n')
+            with self.assertRaises(Exception) as caught:
+                self.read(file=str(outside))
+            self.assertIn('file_outside_read_roots', str(caught.exception))
+        finally:
+            self.server.policy['read_roots'] = None
+
     def test_utf16_be_cross_chunk_content_exact(self):
         # Review finding 2: BOM-less follow-up chunks must keep BE semantics.
         lines = ['行-%03d 中文填充内容填充内容填充内容填充内容填充填充\n' % i

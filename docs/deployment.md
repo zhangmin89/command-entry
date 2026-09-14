@@ -107,8 +107,12 @@ read_roots was already implemented with the server (stage 2). On switch day:
 
 1. Decide `read_roots`: **`null` is an allowed state** — the server falls
    back to `working_roots` (verified in the field: out-of-roots reads get a
-   structured `file_outside_read_roots` rejection). Set an explicit value
-   only to tighten reads beyond the working_roots set.
+   structured `file_outside_read_roots` rejection). To ADD read-only
+   reference directories without duplicating the list, use the
+   `'@working_roots'` token, which expands in place:
+   `"read_roots": ["@working_roots", "C:\\Users\\<user>\\.agents\\skills"]`
+   means "everything workable, plus this reference dir" — the reference dir
+   stays unreadable as an operation cwd (no records are written there).
 2. Register the server + hook, trust the hook in `/hooks`.
 3. Enable pre-trust for the server; set shell to untrusted.
 4. Restart Codex; verify: raw shell -> deny + pointer; read outside

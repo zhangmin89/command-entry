@@ -57,9 +57,13 @@ def validate(policy):
          'require_orphan_guarantee_must_be_bool')
     # R8: an explicit [] is VALID and means deny-all reads; only null/absent
     # inherits working_roots. The validator must not confuse the two.
+    # '@working_roots' is the only allowed @-placeholder.
     roots = policy.get('read_roots')
     need(roots is None or (isinstance(roots, list) and all(isinstance(r, str) for r in roots)),
          'read_roots_invalid')
+    if isinstance(roots, list):
+        need(all(not r.startswith('@') or r == '@working_roots' for r in roots),
+             'read_roots_unknown_placeholder')
     return problems
 
 
