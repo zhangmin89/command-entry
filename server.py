@@ -67,7 +67,40 @@ class Server:
         # Plan 0.1: probe once at startup and log it. Breakaway decides whether
         # entry children can outlive this server.
         self.flags, self.orphan_guaranteed = spawn_creation_flags()
-        self.log_event('startup', flags=hex(self.flags), orphan_guaranteed=self.orphan_guaranteed)
+        self.log_event('startup', flags=hex(self.flags), orphan_guaranteed=self.orphan_guaranteed,
+                       program_health=self.check_programs())
+
+    # Program paths can rot when a whitelisted binary lives in a versioned
+    # directory owned by another tool (e.g. Codex's bin\<hash>\rg.exe).
+    # Fail visible, not fast: log the missing ones and self-heal ONLY from a
+    # pinned, reviewed source -- never download or install anything.
+    HEAL_SOURCES = {'rg': ('C:\\Users\\zhang\\.codex\\command-entry\\rg.exe',)}
+
+    def check_programs(self):
+        report = {'missing': [], 'healed': []}
+        for name, item in self.policy.get('programs', {}).items():
+            path = Path(item.get('path', ''))
+            if path.is_file():
+                continue
+            report['missing'].append(name)
+            for source in self.HEAL_SOURCES.get(name, ()):  # pinned local copies only
+                source_path = Path(source)
+                if not source_path.is_file():
+                    continue
+                if not path.is_absolute():
+                    break  # cannot heal a relative declaration; needs human action
+                try:
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    import shutil
+                    shutil.copy2(source_path, path)
+                    report['healed'].append(name)
+                    break
+                except OSError:
+                    continue  # next source, if any; failure stays visible in 'missing'
+        if report['healed']:
+            report['missing'] = [name for name in report['missing']
+                                 if name not in report['healed']]
+        return report
 
     def verify_binding(self, binding_path):
         """Stage 5 self-check: this file set + policy must match the anchor."""

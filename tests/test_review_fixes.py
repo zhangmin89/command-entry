@@ -63,6 +63,60 @@ def until_terminal(record, timeout=40):
     return 'wait_timeout'
 
 
+class ProgramHealthTests(unittest.TestCase):
+    """Startup program check: detect rot, self-heal from a pinned source."""
+
+    def test_missing_program_detected_and_logged(self):
+        tmp = Path(tempfile.mkdtemp(prefix='health-missing '))
+        policy, policy_path = make_policy(tmp)
+        policy['programs']['ghost'] = {'kind': 'native', 'path': str(tmp / 'ghost.exe')}
+        policy_path.write_text(json.dumps(policy), encoding='utf-8')
+        instance = server_module.Server(policy_path)
+        events = (instance.log_root / 'server-events.jsonl').read_text(encoding='utf-8')
+        startup = [json.loads(line) for line in events.splitlines()
+                   if json.loads(line).get('kind') == 'startup'][-1]
+        self.assertEqual(startup['program_health']['missing'], ['ghost'])
+        self.assertEqual(startup['program_health']['healed'], [])
+
+    def test_rotten_program_healed_from_pinned_source(self):
+        tmp = Path(tempfile.mkdtemp(prefix='health-heal '))
+        source = tmp / 'pinned-rg.exe'
+        source.write_bytes(b'placeholder binary')
+        target = tmp / 'rotten' / 'rg.exe'
+        policy, policy_path = make_policy(tmp)
+        policy['programs']['rg'] = {'kind': 'native', 'path': str(target)}
+        policy_path.write_text(json.dumps(policy), encoding='utf-8')
+        with mock.patch.object(server_module.Server, 'HEAL_SOURCES',
+                               {'rg': (str(source),)}):
+            instance = server_module.Server(policy_path)
+        self.assertTrue(target.is_file())
+        self.assertEqual(target.read_bytes(), b'placeholder binary')
+        events = (instance.log_root / 'server-events.jsonl').read_text(encoding='utf-8')
+        startup = [json.loads(line) for line in events.splitlines()
+                   if json.loads(line).get('kind') == 'startup'][-1]
+        self.assertEqual(startup['program_health']['healed'], ['rg'])
+        self.assertEqual(startup['program_health']['missing'], [])
+
+    def test_relative_path_declared_missing_not_healed(self):
+        # A relative declaration is a policy bug; healing would guess a
+        # process-dependent location, so it must stay visible, not auto-fixed.
+        tmp = Path(tempfile.mkdtemp(prefix='health-relative '))
+        source = tmp / 'pinned-rg.exe'
+        source.write_bytes(b'x')
+        policy, policy_path = make_policy(tmp)
+        policy['programs']['rg'] = {'kind': 'native', 'path': 'rg.exe'}
+        policy_path.write_text(json.dumps(policy), encoding='utf-8')
+        with mock.patch.object(server_module.Server, 'HEAL_SOURCES',
+                               {'rg': (str(source),)}):
+            instance = server_module.Server(policy_path)
+        self.assertFalse((Path.cwd() / 'rg.exe').is_file())
+        events = (instance.log_root / 'server-events.jsonl').read_text(encoding='utf-8')
+        startup = [json.loads(line) for line in events.splitlines()
+                   if json.loads(line).get('kind') == 'startup'][-1]
+        self.assertEqual(startup['program_health']['missing'], ['rg'])
+        self.assertEqual(startup['program_health']['healed'], [])
+
+
 class ClaimProtocolTests(unittest.TestCase):
     """R1/R2: cross-instance claim, normalization, pending block."""
 
