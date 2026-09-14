@@ -70,36 +70,19 @@ class Server:
         self.log_event('startup', flags=hex(self.flags), orphan_guaranteed=self.orphan_guaranteed,
                        program_health=self.check_programs())
 
-    # Program paths can rot when a whitelisted binary lives in a versioned
-    # directory owned by another tool (e.g. Codex's bin\<hash>\rg.exe).
-    # Fail visible, not fast: log the missing ones and self-heal ONLY from a
-    # pinned, reviewed source -- never download or install anything.
-    HEAL_SOURCES = {'rg': ('C:\\Users\\zhang\\.codex\\command-entry\\rg.exe',)}
-
     def check_programs(self):
+        """Report missing configured files without copying or changing policy.
+
+        File existence is not a runtime health check. Recovery requires a
+        separately reviewed source; no such source is configured here.
+        Keep 'healed' empty for compatibility with existing startup logs.
+        """
         report = {'missing': [], 'healed': []}
         for name, item in self.policy.get('programs', {}).items():
             path = Path(item.get('path', ''))
             if path.is_file():
                 continue
             report['missing'].append(name)
-            for source in self.HEAL_SOURCES.get(name, ()):  # pinned local copies only
-                source_path = Path(source)
-                if not source_path.is_file():
-                    continue
-                if not path.is_absolute():
-                    break  # cannot heal a relative declaration; needs human action
-                try:
-                    path.parent.mkdir(parents=True, exist_ok=True)
-                    import shutil
-                    shutil.copy2(source_path, path)
-                    report['healed'].append(name)
-                    break
-                except OSError:
-                    continue  # next source, if any; failure stays visible in 'missing'
-        if report['healed']:
-            report['missing'] = [name for name in report['missing']
-                                 if name not in report['healed']]
         return report
 
     def verify_binding(self, binding_path):
@@ -272,16 +255,17 @@ class Server:
         if not (record_dir / 'result.json').is_file():
             # R5: the caller must be able to recover this instance through the
             # public status tool; include the id and any child-side error.
-            serve_error = directory / 'serve-error.json'
-            detail = read_json(serve_error) if serve_error.is_file() else None
+            detail = self.startup_failure(execution_id)
             return {'execution_id': execution_id, 'request_id': req['request_id'],
-                    'state': 'unconfirmed_start', 'in_flight_dedup': False,
+                    'state': 'start_failed' if detail else 'unconfirmed_start',
+                    'in_flight_dedup': False,
                     'orphan_guaranteed': self.orphan_guaranteed,
                     'record_dir': str(record_dir),
                     'serve_error': detail,
-                    'note': 'Entry child did not confirm its initial state within %ss. '
+                    'note': ('Entry child reported a recorded startup failure.' if detail else
+                            'Entry child did not confirm its initial state within %ss. '
                             'Do NOT rerun blindly; query status for this execution_id first.'
-                            % self.policy.get('start_confirm_seconds', 15)}
+                            % self.policy.get('start_confirm_seconds', 15))}
         return {'execution_id': execution_id, 'request_id': req['request_id'],
                 'state': 'starting', 'in_flight_dedup': False,
                 'orphan_guaranteed': self.orphan_guaranteed,
@@ -375,11 +359,34 @@ class Server:
 
     # ---------- status / output / cancel ----------
 
+    def startup_failure(self, execution_id):
+        """Read failure evidence bound to this serve directory, not liveness."""
+        try:
+            failure = read_json(self.serve_root / execution_id / 'serve-error.json')
+        except (ValueError, OSError):
+            return None
+        if not isinstance(failure, dict) or failure.get('state') != 'not_started':
+            return None
+        # entry_v2.serve currently writes a null id; its directory binds it.
+        # An explicit conflicting id must never describe this execution.
+        if failure.get('execution_id') not in (None, execution_id):
+            return None
+        error = failure.get('error')
+        if not isinstance(error, dict) or not all(
+                isinstance(error.get(key), str) for key in ('kind', 'reason')):
+            return None
+        return failure
+
     def tool_status(self, form):
         require(isinstance(form, dict), 'form_object_required')
         require(not set(form).difference(LOCATION_FIELDS), 'unknown_form_fields')
         directory, _ = self.locate(form['execution_id'])
+        failure = (self.startup_failure(directory.name)
+                   if not (directory / 'result.json').is_file() else None)
         state = self.snapshot(directory)
+        if failure and not (directory / 'result.json').is_file():
+            state = {'state': 'start_failed', 'serve_error': failure,
+                     'subgoal': {'status': 'unknown'}}
         state['execution_id'] = directory.name
         return entry_v2.bounded(state)
 
@@ -638,17 +645,6 @@ class Server:
                         pending = ''
                 elif eof:
                     pending = ''
-                # Giant-line guards (review finding 5): the quota must bind
-                # DURING accumulation, not after a full line has formed.
-                if pending and line_index + 1 >= start and len(pending.encode('utf-8')) > quota:
-                    return {'error': 'single_line_exceeds_quota',
-                            'line_number': line_index + 1,
-                            'line_bytes_at_least': len(pending.encode('utf-8')),
-                            'quota_bytes': quota,
-                            'note': 'Single line exceeded quota mid-stream; aborted before '
-                                    'full accumulation. Truncation is forbidden.'}
-                if pending and line_index + 1 < start and len(pending) > quota * 4:
-                    pending = ''  # skipped line: count it, never hold its bytes
                 for line in parts:
                     line_index += 1
                     if line_index < start:
@@ -675,6 +671,18 @@ class Server:
                     stopped_early = True
                 if stopped_early or eof or decode_failed is not None:
                     break
+                # Complete lines advance line_index before classifying the
+                # pending tail. A finished range must not inspect later lines.
+                # Keep the quota bound during accumulation of a requested line.
+                if pending and line_index + 1 >= start and len(pending.encode('utf-8')) > quota:
+                    return {'error': 'single_line_exceeds_quota',
+                            'line_number': line_index + 1,
+                            'line_bytes_at_least': len(pending.encode('utf-8')),
+                            'quota_bytes': quota,
+                            'note': 'Single line exceeded quota mid-stream; aborted before '
+                                    'full accumulation. Truncation is forbidden.'}
+                if pending and line_index + 1 < start and len(pending) > quota * 4:
+                    pending = ''  # skipped line: count it, never hold its bytes
         if decode_failed is not None and not stopped_early:
             suggestions = [name for name in ('gbk', 'utf-16-le', 'utf-16', 'utf-8')
                            if strict_decodable(prefix, name)]

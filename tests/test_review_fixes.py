@@ -64,7 +64,7 @@ def until_terminal(record, timeout=40):
 
 
 class ProgramHealthTests(unittest.TestCase):
-    """Startup program check: detect rot, self-heal from a pinned source."""
+    """Startup checks report missing files without restoring or modifying them."""
 
     def test_missing_program_detected_and_logged(self):
         tmp = Path(tempfile.mkdtemp(prefix='health-missing '))
@@ -78,37 +78,46 @@ class ProgramHealthTests(unittest.TestCase):
         self.assertEqual(startup['program_health']['missing'], ['ghost'])
         self.assertEqual(startup['program_health']['healed'], [])
 
-    def test_rotten_program_healed_from_pinned_source(self):
-        tmp = Path(tempfile.mkdtemp(prefix='health-heal '))
-        source = tmp / 'pinned-rg.exe'
+    def test_missing_program_does_not_copy_or_change_policy(self):
+        tmp = Path(tempfile.mkdtemp(prefix='health-no-copy '))
+        source = tmp / 'rg.exe'
         source.write_bytes(b'placeholder binary')
         target = tmp / 'rotten' / 'rg.exe'
         policy, policy_path = make_policy(tmp)
         policy['programs']['rg'] = {'kind': 'native', 'path': str(target)}
         policy_path.write_text(json.dumps(policy), encoding='utf-8')
-        with mock.patch.object(server_module.Server, 'HEAL_SOURCES',
-                               {'rg': (str(source),)}):
-            instance = server_module.Server(policy_path)
-        self.assertTrue(target.is_file())
-        self.assertEqual(target.read_bytes(), b'placeholder binary')
+        before = policy_path.read_bytes()
+        instance = server_module.Server(policy_path)
+        self.assertFalse(target.parent.exists())
+        self.assertEqual(source.read_bytes(), b'placeholder binary')
+        self.assertEqual(policy_path.read_bytes(), before)
         events = (instance.log_root / 'server-events.jsonl').read_text(encoding='utf-8')
         startup = [json.loads(line) for line in events.splitlines()
                    if json.loads(line).get('kind') == 'startup'][-1]
-        self.assertEqual(startup['program_health']['healed'], ['rg'])
-        self.assertEqual(startup['program_health']['missing'], [])
+        self.assertEqual(startup['program_health']['healed'], [])
+        self.assertEqual(startup['program_health']['missing'], ['rg'])
+
+    def test_existing_program_is_unchanged(self):
+        tmp = Path(tempfile.mkdtemp(prefix='health-existing '))
+        target = tmp / 'rg.exe'
+        target.write_bytes(b'configured file')
+        policy, policy_path = make_policy(tmp)
+        policy['programs']['rg'] = {'kind': 'native', 'path': str(target)}
+        policy_path.write_text(json.dumps(policy), encoding='utf-8')
+        before = policy_path.read_bytes()
+        instance = server_module.Server(policy_path)
+        self.assertEqual(instance.check_programs(), {'missing': [], 'healed': []})
+        self.assertEqual(target.read_bytes(), b'configured file')
+        self.assertEqual(policy_path.read_bytes(), before)
 
     def test_relative_path_declared_missing_not_healed(self):
         # A relative declaration is a policy bug; healing would guess a
         # process-dependent location, so it must stay visible, not auto-fixed.
         tmp = Path(tempfile.mkdtemp(prefix='health-relative '))
-        source = tmp / 'pinned-rg.exe'
-        source.write_bytes(b'x')
         policy, policy_path = make_policy(tmp)
         policy['programs']['rg'] = {'kind': 'native', 'path': 'rg.exe'}
         policy_path.write_text(json.dumps(policy), encoding='utf-8')
-        with mock.patch.object(server_module.Server, 'HEAL_SOURCES',
-                               {'rg': (str(source),)}):
-            instance = server_module.Server(policy_path)
+        instance = server_module.Server(policy_path)
         self.assertFalse((Path.cwd() / 'rg.exe').is_file())
         events = (instance.log_root / 'server-events.jsonl').read_text(encoding='utf-8')
         startup = [json.loads(line) for line in events.splitlines()
@@ -285,7 +294,7 @@ class StartFailureSurfaceTests(unittest.TestCase):
         cls.policy, cls.policy_path = make_policy(cls.tmp, start_confirm_seconds=1)
         cls.server = server_module.Server(cls.policy_path)
 
-    def test_unconfirmed_start_returns_id_and_serve_error(self):
+    def test_child_start_failure_returns_queryable_error(self):
         def fake_popen(command, **kwargs):
             record_dir = Path(command[command.index('--record-dir') + 1])
             common.write_new(record_dir / 'serve-error.json',
@@ -295,9 +304,15 @@ class StartFailureSurfaceTests(unittest.TestCase):
         with mock.patch.object(server_module.subprocess, 'Popen', fake_popen):
             result = self.server.tool_start({'operation': 'native', 'program': 'git',
                                              'workdir': str(self.tmp), 'args': ['--version']})
-        self.assertEqual(result['state'], 'unconfirmed_start')
+        self.assertEqual(result['state'], 'start_failed')
         self.assertIn('execution_id', result)
         self.assertEqual(result['serve_error']['error']['reason'], 'boom')
+        with mock.patch.object(server_module.subprocess, 'Popen') as spawn:
+            queried = self.server.tool_status({'execution_id': result['execution_id']})
+        spawn.assert_not_called()
+        self.assertEqual(queried['state'], result['state'])
+        self.assertEqual(queried['execution_id'], result['execution_id'])
+        self.assertEqual(queried['serve_error']['error'], result['serve_error']['error'])
         # serve-error.json proves not_started (confirmed terminal): the next
         # identical start is a NEW intent, never a dead-end block; and the
         # never-created record dir must not crash cancel.
@@ -310,6 +325,17 @@ class StartFailureSurfaceTests(unittest.TestCase):
         self.assertEqual(cancelled['cancel_action'], 'already_terminal')
         self.assertEqual(cancelled['state'], 'not_started')
 
+    def test_unconfirmed_start_without_failure_remains_unknown(self):
+        with mock.patch.object(server_module.subprocess, 'Popen', return_value=object()) as spawn:
+            result = self.server.tool_start({'operation': 'native', 'program': 'git',
+                                             'workdir': str(self.tmp), 'args': ['--help']})
+            queried = self.server.tool_status({'execution_id': result['execution_id']})
+        self.assertEqual(spawn.call_count, 1)
+        self.assertEqual(result['state'], 'unconfirmed_start')
+        self.assertIsNone(result['serve_error'])
+        self.assertEqual(queried['state'], 'unknown')
+        self.assertEqual(queried['execution_id'], result['execution_id'])
+
     def test_spawn_oserror_records_failure_and_unlocks(self):
         # R5 follow-up: even a raw Popen OSError must persist a serve-error
         # tied to the id, so the next start is a new intent, not a dead end.
@@ -321,6 +347,15 @@ class StartFailureSurfaceTests(unittest.TestCase):
         self.assertIn('execution_id', result)
         serve_error = self.server.serve_root / result['execution_id'] / 'serve-error.json'
         self.assertTrue(serve_error.is_file())
+        saved = serve_error.read_bytes()
+        with mock.patch.object(server_module.subprocess, 'Popen') as spawn:
+            for _ in range(2):
+                queried = self.server.tool_status({'execution_id': result['execution_id']})
+                self.assertEqual(queried['state'], result['state'])
+                self.assertEqual(queried['execution_id'], result['execution_id'])
+                self.assertEqual(queried['serve_error']['error'], result['serve_error']['error'])
+        spawn.assert_not_called()
+        self.assertEqual(serve_error.read_bytes(), saved)
         with mock.patch.object(server_module.subprocess, 'Popen',
                                side_effect=OSError(193, 'bad exe')):
             again = self.server.tool_start({'operation': 'native', 'program': 'git',
@@ -328,6 +363,66 @@ class StartFailureSurfaceTests(unittest.TestCase):
         self.assertNotEqual(again['execution_id'], result['execution_id'])
         cancelled = self.server.tool_cancel({'execution_id': result['execution_id']})
         self.assertEqual(cancelled['cancel_action'], 'already_terminal')
+
+
+class StartupFailureStatusTests(unittest.TestCase):
+    """A startup sidecar supplements missing results, never replaces them."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix='review-startstatus '))
+        _, policy_path = make_policy(self.tmp)
+        self.server = server_module.Server(policy_path)
+        self.execution_id = '11111111-1111-4111-8111-111111111111'
+        self.serve = self.server.serve_root / self.execution_id
+        self.serve.mkdir(parents=True)
+        common.write_new(self.serve / 'request.json', {'business': {'cwd': str(self.tmp)}})
+        self.failure = {'state': 'not_started', 'execution_id': self.execution_id,
+                        'error': {'kind': 'OSError', 'reason': 'synthetic failure'}}
+
+    def status(self):
+        with mock.patch.object(server_module.subprocess, 'Popen') as spawn:
+            result = self.server.tool_status({'execution_id': self.execution_id})
+        spawn.assert_not_called()
+        self.assertEqual(result['execution_id'], self.execution_id)
+        return result
+
+    def test_child_null_id_is_bound_by_serve_directory(self):
+        self.failure['execution_id'] = None  # entry_v2.serve's existing format
+        common.write_new(self.serve / 'serve-error.json', self.failure)
+        result = self.status()
+        self.assertEqual(result['state'], 'start_failed')
+        self.assertEqual(result['serve_error']['error'], self.failure['error'])
+
+    def test_existing_result_has_priority_including_unknown(self):
+        common.write_new(self.serve / 'serve-error.json', self.failure)
+        directory = self.server.context(self.tmp) / self.execution_id
+        directory.mkdir(parents=True)
+        for state in ('running', 'exited', 'unknown'):
+            with self.subTest(state=state):
+                envelope = {'state': state, 'execution_id': self.execution_id,
+                            'reason': 'existing result'}
+                common.save(directory / 'result.json', envelope)
+                self.assertEqual(self.status(), envelope)
+
+    def test_missing_failure_stays_unknown(self):
+        result = self.status()
+        self.assertEqual(result['state'], 'unknown')
+        self.assertEqual(result['reason'], 'claim_exists_without_readable_state')
+
+    def test_invalid_failure_stays_unknown(self):
+        invalid = [[], {'state': 'not_started'},
+                   dict(self.failure, state='running'),
+                   dict(self.failure, execution_id='22222222-2222-4222-8222-222222222222'),
+                   dict(self.failure, error='not an error object'),
+                   dict(self.failure, error={'kind': 'OSError', 'reason': 7})]
+        for failure in invalid:
+            with self.subTest(failure=failure):
+                common.save(self.serve / 'serve-error.json', failure)
+                self.assertEqual(self.status()['state'], 'unknown')
+
+    def test_malformed_failure_stays_unknown(self):
+        (self.serve / 'serve-error.json').write_text('{', encoding='utf-8')
+        self.assertEqual(self.status()['state'], 'unknown')
 
 
 class StreamingReadTextTests(unittest.TestCase):
@@ -467,6 +562,33 @@ class StreamingReadTextTests(unittest.TestCase):
             self.assertEqual(result['lines_served'], 2)
         finally:
             self.server.policy['read_quota_bytes'] = 200
+
+    def test_requested_long_line_after_short_is_not_silently_truncated(self):
+        path = self.tmp / 'requested-long-after-short.txt'
+        path.write_bytes(b'a\n' + b'x' * 65634 + b'\n')
+        result = self.read(file=str(path), start_line=2, max_lines=1)
+        self.assertEqual(result.get('error'), 'single_line_exceeds_quota')
+        self.assertEqual(result['line_number'], 2)
+        self.assertNotIn('text', result)
+
+    def test_short_requested_range_ignores_later_long_line(self):
+        path = self.tmp / 'short-before-long.txt'
+        path.write_bytes(b'ok\n' + b'x' * 70000 + b'\n')
+        result = self.read(file=str(path), start_line=1, max_lines=1)
+        self.assertNotIn('error', result)
+        self.assertEqual(result['text'], 'ok\n')
+        self.assertEqual(result['lines_served'], 1)
+        self.assertEqual(result['next_start_line'], 2)
+        self.assertTrue(result['remaining'])
+
+    def test_short_line_after_skipped_long_line_is_complete(self):
+        path = self.tmp / 'short-after-skipped-long.txt'
+        path.write_bytes(b'x' * 131172 + b'\n' + '中文 tail\n'.encode('utf-8'))
+        result = self.read(file=str(path), start_line=2, max_lines=1)
+        self.assertNotIn('error', result)
+        self.assertEqual(result['text'], '中文 tail\n')
+        self.assertEqual(result['lines_served'], 1)
+        self.assertEqual(result['next_start_line'], 3)
 
     def test_giant_single_line_aborts_before_full_accumulation(self):
         # Review finding 5: the quota must bind mid-stream, not after the
