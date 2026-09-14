@@ -44,6 +44,16 @@ NOT source: every machine rebuilds it locally with
 from git tracking (`git rm --cached` + .gitignore); the local file is kept,
 never synced between machines.
 
+## Housekeeping: _claims directories accumulate
+
+`serve_root/_claims/` holds one directory per unique content fingerprint,
+forever. Functionally harmless (reused across retries of the same content),
+but unique-content churn (timestamped scripts, random args) grows the
+directory over time. Pruning is safe: a claim dir whose referenced execution
+is in a confirmed terminal state — or that is empty and older than
+`claim_timeout_seconds` — may simply be deleted; it is recreated on demand.
+No code change needed; revisit if serve_root growth becomes visible.
+
 ## working_roots narrowing (this stage's debt payment)
 
 The deployed policy must narrow `working_roots` from the template's drive

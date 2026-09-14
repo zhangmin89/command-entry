@@ -143,7 +143,14 @@ class Server:
             existing_state = self.snapshot(existing_record) if existing_record.is_dir() \
                 else {'state': 'unknown', 'reason': 'record_missing'}
             state_name = existing_state['state']
-            if state_name not in CONFIRMED_TERMINAL and not self.abandoned_confirmed(existing_record):
+            # serve-error.json is written only when the entry child failed
+            # before run() could start the business: not_started is a
+            # CONFIRMED terminal, so it must not block a new intent (and
+            # cancel must not choke on the never-created record dir).
+            confirmed_not_started = (not existing_record.is_dir()) and \
+                (self.serve_root / claimed_id / 'serve-error.json').is_file()
+            if not confirmed_not_started and state_name not in CONFIRMED_TERMINAL \
+                    and not self.abandoned_confirmed(existing_record):
                 blocked = state_name in ('unknown', 'tool_error')
                 return {'execution_id': claimed_id, 'state': state_name,
                         'in_flight_dedup': not blocked, 'dedup_blocked': blocked,
@@ -152,8 +159,8 @@ class Server:
                         'note': 'Instance state is unconfirmed; a duplicate is NOT started. '
                                 'Use cancel to confirm abandonment before a new intent.'
                         if blocked else 'Same content still running; returning the existing id.'}
-            # Confirmed terminal or confirmed abandoned: a new intent proceeds
-            # and the claim is re-published with the new execution id below.
+            # Confirmed terminal / not_started / confirmed abandoned: a new
+            # intent proceeds and the claim is re-published below.
 
         if 'previous_execution' in form:
             task_ref, step_ref, previous_request, origin_attempt = self.resolve_previous(
@@ -231,8 +238,9 @@ class Server:
                     'orphan_guaranteed': self.orphan_guaranteed,
                     'record_dir': str(record_dir),
                     'serve_error': detail,
-                    'note': 'Entry child did not confirm its initial state within 15s. '
-                            'Do NOT rerun blindly; query status for this execution_id first.'}
+                    'note': 'Entry child did not confirm its initial state within %ss. '
+                            'Do NOT rerun blindly; query status for this execution_id first.'
+                            % self.policy.get('start_confirm_seconds', 15)}
         return {'execution_id': execution_id, 'request_id': req['request_id'],
                 'state': 'starting', 'in_flight_dedup': False,
                 'orphan_guaranteed': self.orphan_guaranteed,
@@ -355,6 +363,14 @@ class Server:
         require(isinstance(form, dict), 'form_object_required')
         require(not set(form).difference(LOCATION_FIELDS), 'unknown_form_fields')
         directory, _ = self.locate(form['execution_id'])
+        if not directory.is_dir():
+            # The entry child died before creating any record. serve-error
+            # proves not_started (confirmed terminal); anything else stays
+            # unconfirmed rather than crashing on the missing directory.
+            require((self.serve_root / form['execution_id'] / 'serve-error.json').is_file(),
+                    'record_missing_unconfirmed')
+            return {'execution_id': directory.name, 'state': 'not_started',
+                    'cancel_action': 'already_terminal'}
         state = self.snapshot(directory)
         if state['state'] in CONFIRMED_TERMINAL:
             return {'execution_id': directory.name, 'state': state['state'],

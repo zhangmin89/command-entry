@@ -28,5 +28,6 @@
   "cancel_grace_seconds": 15,
   "cancel_confirm_seconds": 10,
   "claim_timeout_seconds": 120,
+  "start_confirm_seconds": 15,
   "require_orphan_guarantee": false
 }

@@ -49,6 +49,7 @@ def validate(policy):
                            ('cancel_grace_seconds', 1, 120),
                            ('cancel_confirm_seconds', 1, 60),
                            ('claim_timeout_seconds', 10, 3600),
+                           ('start_confirm_seconds', 1, 120),
                            ('wait_stop_after_no_progress', 2, 100)):
         value = policy.get(key, low)
         need(type(value) is int and low <= value <= high, key + '_out_of_range')

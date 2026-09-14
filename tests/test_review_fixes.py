@@ -195,11 +195,8 @@ class StartFailureSurfaceTests(unittest.TestCase):
         cls.server = server_module.Server(cls.policy_path)
 
     def test_unconfirmed_start_returns_id_and_serve_error(self):
-        serve_dir_holder = {}
-
         def fake_popen(command, **kwargs):
             record_dir = Path(command[command.index('--record-dir') + 1])
-            serve_dir_holder['dir'] = record_dir
             common.write_new(record_dir / 'serve-error.json',
                              {'state': 'not_started', 'error': {'kind': 'Invalid', 'reason': 'boom'}})
             return object()
@@ -210,11 +207,17 @@ class StartFailureSurfaceTests(unittest.TestCase):
         self.assertEqual(result['state'], 'unconfirmed_start')
         self.assertIn('execution_id', result)
         self.assertEqual(result['serve_error']['error']['reason'], 'boom')
-        # The claim was published: a duplicate start classifies, never spawns.
-        again = self.server.tool_start({'operation': 'native', 'program': 'git',
-                                        'workdir': str(self.tmp), 'args': ['--version']})
-        self.assertEqual(again['execution_id'], result['execution_id'])
-        self.assertTrue(again['dedup_blocked'])
+        # serve-error.json proves not_started (confirmed terminal): the next
+        # identical start is a NEW intent, never a dead-end block; and the
+        # never-created record dir must not crash cancel.
+        with mock.patch.object(server_module.subprocess, 'Popen', fake_popen):
+            again = self.server.tool_start({'operation': 'native', 'program': 'git',
+                                            'workdir': str(self.tmp), 'args': ['--version']})
+        self.assertNotEqual(again['execution_id'], result['execution_id'])
+        self.assertFalse(again.get('dedup_blocked'))
+        cancelled = self.server.tool_cancel({'execution_id': result['execution_id']})
+        self.assertEqual(cancelled['cancel_action'], 'already_terminal')
+        self.assertEqual(cancelled['state'], 'not_started')
 
 
 class StreamingReadTextTests(unittest.TestCase):
