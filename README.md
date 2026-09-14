@@ -1,7 +1,11 @@
 # command-entry · pure beta
 
-Windows command execution entry for Codex. Zero third-party dependencies:
-Python 3.14 + PowerShell 7 only. Development plan: `pure-beta-dev-plan.md`
+Windows command execution entry for Codex. The C# MCP server lives in
+`src/CommandEntry`: .NET 10, official MCP C# SDK, Windows x64 Native AOT.
+Build, validation and deployment: [C# migration](docs/csharp-migration.md).
+
+The Python reference implementation below uses Python 3.14 + PowerShell 7.
+Development plan: `pure-beta-dev-plan.md`
 (v4, 2026-09-13). Baseline: V2 candidate `2.0.0-candidate.3-closeout.2`.
 
 ## Layout
