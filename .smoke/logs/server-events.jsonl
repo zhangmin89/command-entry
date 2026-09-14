@@ -1,0 +1,16 @@
+{"flags":"0x1000008","kind":"startup","orphan_guaranteed":true,"program_health":{"healed":[],"missing":[],"missing_env":[]},"ts":1789400378.833466}
+{"flags":"0x1000008","kind":"startup","orphan_guaranteed":true,"program_health":{"healed":[],"missing":[],"missing_env":[]},"ts":1789400396.448547}
+{"flags":"0x1000008","kind":"startup","orphan_guaranteed":true,"program_health":{"healed":[],"missing":[],"missing_env":[]},"ts":1789400449.720153}
+{"kind":"read_text","ts":1789400449.81398}
+{"error_kind":"Invalid","kind":"rejected","reason":"execution_not_found","tool":"status","ts":1789400449.815477}
+{"flags":"0x1000008","kind":"startup","orphan_guaranteed":true,"program_health":{"healed":[],"missing":[],"missing_env":[]},"ts":1789400483.2587576}
+{"flags":"0x1000008","kind":"startup","orphan_guaranteed":true,"program_health":{"healed":[],"missing":[],"missing_env":[]},"ts":1789400509.7578115}
+{"flags":"0x1000008","kind":"startup","orphan_guaranteed":true,"program_health":{"healed":[],"missing":[],"missing_env":[]},"ts":1789400536.9944432}
+{"flags":"0x1000008","kind":"startup","orphan_guaranteed":true,"program_health":{"healed":[],"missing":[],"missing_env":[]},"ts":1789400554.5469496}
+{"kind":"read_text","ts":1789400554.692804}
+{"kind":"start_operation","ts":1789400554.841983}
+{"kind":"wait","ts":1789400556.873212}
+{"kind":"output","ts":1789400556.8875468}
+{"kind":"status","ts":1789400556.8941896}
+{"kind":"start_operation","ts":1789400557.1271727}
+{"error_kind":"Invalid","kind":"rejected","reason":"unknown_form_fields","tool":"start_operation","ts":1789400557.131762}

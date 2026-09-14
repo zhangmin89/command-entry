@@ -14,6 +14,9 @@ internal static class Program
         }
         try
         {
+#if CONFORMANCE
+            if (args is ["conformance"]) return Conformance.Run();
+#endif
             if (args is ["worker"]) return await ExecutionOwner.Worker();
             if (args is ["location"]) { Write(ExecutionOwner.Location()); return 0; }
             if (args is ["serve", "--record-dir", var directory]) return await ExecutionOwner.Serve(directory);
