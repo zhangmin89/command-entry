@@ -59,7 +59,9 @@ class ServerTests(unittest.TestCase):
             'wait_budget_seconds': 15,
             'wait_poll_interval_seconds': 1,
             'wait_stop_after_no_progress': 2,
-            'cancel_grace_seconds': 12,
+            # Grace must comfortably exceed the entry monitor's 10s tick,
+            # otherwise suite load can push the graceful path past the window.
+            'cancel_grace_seconds': 25,
             'require_orphan_guarantee': False,
         }
         cls.policy_path.write_text(json.dumps(cls.policy), encoding='utf-8')

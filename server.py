@@ -7,6 +7,7 @@ entry child owns its Windows Job and runs the full V2 lifecycle, so a server
 crash never kills in-flight business work.
 """
 import argparse
+import contextlib
 import hashlib
 import json
 from pathlib import Path
@@ -23,7 +24,7 @@ import wait_state
 from windows_state import (FileMutex, observe, spawn_creation_flags,
                            terminate_if_same_instance)
 
-VERSION = 'pure-beta.server.2'
+VERSION = 'pure-beta.server.3'
 TERMINAL = {'exited', 'rejected', 'timed_out', 'cancelled', 'unknown', 'tool_error'}
 # Only these prove the business ended. unknown/tool_error mean "not confirmed";
 # they must never justify starting a duplicate (review R3).
@@ -133,55 +134,57 @@ class Server:
         content['workdir'] = str(cwd)
         content_fingerprint = digest(content)
 
-        # R1: atomic cross-instance claim before any identity is assigned.
-        outcome, claimed_id, claim_dir = self.claim_execution(content_fingerprint)
-        if outcome == 'pending':
-            raise Invalid('claim_pending_unconfirmed_retry_later')
-        if outcome == 'existing':
-            existing_record = self.context(Path(read_json(
-                self.serve_root / claimed_id / 'request.json')['business']['cwd']).resolve()) / claimed_id
-            existing_state = self.snapshot(existing_record) if existing_record.is_dir() \
-                else {'state': 'unknown', 'reason': 'record_missing'}
-            state_name = existing_state['state']
-            # serve-error.json is written only when the entry child failed
-            # before run() could start the business: not_started is a
-            # CONFIRMED terminal, so it must not block a new intent (and
-            # cancel must not choke on the never-created record dir).
-            confirmed_not_started = (not existing_record.is_dir()) and \
-                (self.serve_root / claimed_id / 'serve-error.json').is_file()
-            if not confirmed_not_started and state_name not in CONFIRMED_TERMINAL \
-                    and not self.abandoned_confirmed(existing_record):
-                blocked = state_name in ('unknown', 'tool_error')
-                return {'execution_id': claimed_id, 'state': state_name,
-                        'in_flight_dedup': not blocked, 'dedup_blocked': blocked,
-                        'orphan_guaranteed': self.orphan_guaranteed,
-                        'record_dir': str(existing_record),
-                        'note': 'Instance state is unconfirmed; a duplicate is NOT started. '
-                                'Use cancel to confirm abandonment before a new intent.'
-                        if blocked else 'Same content still running; returning the existing id.'}
-            # Confirmed terminal / not_started / confirmed abandoned: a new
-            # intent proceeds and the claim is re-published below.
+        # R1 v2: ONE exclusive critical section per fingerprint covering
+        # classify -> assign -> publish. A stale-terminal claim can only be
+        # re-taken inside this section, so two instances can never assign
+        # competing identities for the same content (review finding 1).
+        with self.claim_section(content_fingerprint) as (outcome, claimed_id, claim_dir):
+            if outcome == 'pending':
+                raise Invalid('claim_pending_unconfirmed_retry_later')
+            if outcome == 'existing':
+                existing_record = self.context(Path(read_json(
+                    self.serve_root / claimed_id / 'request.json')['business']['cwd']).resolve()) / claimed_id
+                existing_state = self.snapshot(existing_record) if existing_record.is_dir() \
+                    else {'state': 'unknown', 'reason': 'record_missing'}
+                state_name = existing_state['state']
+                # serve-error.json is written only when the entry child failed
+                # before run() could start the business: not_started is a
+                # CONFIRMED terminal, so it must not block a new intent (and
+                # cancel must not choke on the never-created record dir).
+                confirmed_not_started = (not existing_record.is_dir()) and \
+                    (self.serve_root / claimed_id / 'serve-error.json').is_file()
+                if not confirmed_not_started and state_name not in CONFIRMED_TERMINAL \
+                        and not self.abandoned_confirmed(existing_record):
+                    blocked = state_name in ('unknown', 'tool_error')
+                    return {'execution_id': claimed_id, 'state': state_name,
+                            'in_flight_dedup': not blocked, 'dedup_blocked': blocked,
+                            'orphan_guaranteed': self.orphan_guaranteed,
+                            'record_dir': str(existing_record),
+                            'note': 'Instance state is unconfirmed; a duplicate is NOT started. '
+                                    'Use cancel to confirm abandonment before a new intent.'
+                            if blocked else 'Same content still running; returning the existing id.'}
+                # Confirmed terminal / not_started / confirmed abandoned: a
+                # new intent proceeds, still inside the exclusive section.
 
-        if 'previous_execution' in form:
-            task_ref, step_ref, previous_request, origin_attempt = self.resolve_previous(
-                form['previous_execution'], content_fingerprint)
-            attempt = origin_attempt + 1
-        else:
-            seq = 1 + sum(1 for path in self.serve_root.glob('*/request.json')
-                          if read_json(path).get('content_fingerprint') == content_fingerprint)
-            task_ref, step_ref, previous_request = 'mcp-direct', content_fingerprint[:12] + '-' + str(seq), None
-            attempt = 0
-        business = {key: value for key, value in form.items()
-                    if key not in ('workdir', 'previous_execution')}
-        business.update({'task_ref': task_ref, 'step_ref': step_ref, 'attempt': attempt,
-                         'cwd': workdir, 'operation': operation})
-        if previous_request:
-            business['previous_request'] = previous_request
-        req = shape(business)
-        execution_id = execution_identity(req['request_id'])
+            if 'previous_execution' in form:
+                task_ref, step_ref, previous_request, origin_attempt = self.resolve_previous(
+                    form['previous_execution'], content_fingerprint)
+                attempt = origin_attempt + 1
+            else:
+                seq = 1 + sum(1 for path in self.serve_root.glob('*/request.json')
+                              if read_json(path).get('content_fingerprint') == content_fingerprint)
+                task_ref, step_ref, previous_request = 'mcp-direct', content_fingerprint[:12] + '-' + str(seq), None
+                attempt = 0
+            business = {key: value for key, value in form.items()
+                        if key not in ('workdir', 'previous_execution')}
+            business.update({'task_ref': task_ref, 'step_ref': step_ref, 'attempt': attempt,
+                             'cwd': workdir, 'operation': operation})
+            if previous_request:
+                business['previous_request'] = previous_request
+            req = shape(business)
+            execution_id = execution_identity(req['request_id'])
 
-        # Fail closed before creating anything on disk (plan 0.1).
-        try:
+            # Fail closed before creating anything on disk (plan 0.1).
             require(not self.policy.get('require_orphan_guarantee') or self.orphan_guaranteed,
                     'orphan_guarantee_required_but_unavailable')
             directory = self.serve_root / execution_id
@@ -200,20 +203,13 @@ class Server:
                         'content_fingerprint': content_fingerprint}
             write_new(directory / 'request.json', envelope)
             write_new(directory / 'policy.json', json.loads(self.policy_path.read_text(encoding='utf-8-sig')))
-            # Publish the identity into the claim BEFORE spawning: after this
-            # point any instance can learn the execution id from the claim.
+            # Publish the identity into the claim INSIDE the section: the
+            # next claimant only sees a fully assigned identity.
             save(claim_dir / 'claim.json', {'execution_id': execution_id,
                                             'published_at_unix': time.time()})
-        except Exception:
-            # Our own failure before publishing must not block others for the
-            # full claim timeout; rmdir only succeeds while still empty.
-            if outcome == 'claim':
-                try:
-                    claim_dir.rmdir()
-                except OSError:
-                    pass
-            raise
+        # Section released; spawning happens outside the lock.
 
+        record_dir = self.context(cwd) / execution_id
         try:
             subprocess.Popen([self.policy['python'], '-X', 'utf8',
                               str(Path(entry_v2.__file__).resolve()), 'serve', '--record-dir', str(directory)],
@@ -221,10 +217,22 @@ class Server:
                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                              cwd=str(cwd), shell=False)
         except OSError as error:
-            raise Invalid('entry_child_spawn_failed: ' + str(error)[:200])
+            # R5: a confirmed pre-business failure must be recoverable by id:
+            # record it like any other serve error so the next identical
+            # start is a new intent and cancel reports already_terminal.
+            detail = {'kind': 'OSError', 'reason': str(error)[:300]}
+            write_new(directory / 'serve-error.json',
+                      {'schema_version': 2, 'state': 'not_started',
+                       'execution_id': execution_id, 'error': detail})
+            return {'execution_id': execution_id, 'request_id': req['request_id'],
+                    'state': 'start_failed', 'in_flight_dedup': False,
+                    'orphan_guaranteed': self.orphan_guaranteed,
+                    'record_dir': str(record_dir),
+                    'serve_error': {'error': detail},
+                    'note': 'Entry child could not be spawned; the failure is recorded '
+                            'and this execution_id is queryable via status.'}
         # Close the dedup race: the start response returns only after the
         # entry child has persisted its initial state.
-        record_dir = self.context(cwd) / execution_id
         deadline = time.monotonic() + self.policy.get('start_confirm_seconds', 15)
         while not (record_dir / 'result.json').is_file() and time.monotonic() < deadline:
             time.sleep(0.1)
@@ -271,38 +279,43 @@ class Server:
                 best = path
         return best.parent.name if best else None
 
-    def claim_execution(self, content_fingerprint):
-        """Atomic cross-instance claim (review R1).
+    @contextlib.contextmanager
+    def claim_section(self, content_fingerprint):
+        """Exclusive per-fingerprint critical section (review R1 v2).
 
-        Returns (outcome, execution_id_or_None, claim_dir):
-        ('claim', None, dir)     — this caller owns a fresh claim;
-        ('existing', id, dir)    — an identity is published (or healable);
-        ('pending', None, dir)   — an unfinished claim too fresh to declare
-                                   abandoned; the caller must NOT start.
+        Yields (outcome, execution_id_or_None, claim_dir):
+        ('claim', None, dir)   — caller owns the section; identity assignment
+                                 and claim.json publishing MUST happen before
+                                 the with-block exits;
+        ('existing', id, dir)  — identity already published (or healed);
+        ('pending', None, dir) — another instance holds the section RIGHT
+                                 NOW; the caller must NOT start anything.
+        Liveness is proven by the OS handle: an unfinished claim left by a
+        crashed instance is simply re-taken, no timeout heuristics.
         """
         claims_root = self.serve_root / '_claims'
         claims_root.mkdir(parents=True, exist_ok=True)
         claim_dir = claims_root / content_fingerprint
+        claim_dir.mkdir(exist_ok=True)
         try:
-            claim_dir.mkdir()
-            return ('claim', None, claim_dir)
-        except FileExistsError:
-            pass
-        claim_file = claim_dir / 'claim.json'
-        if claim_file.is_file():
-            return ('existing', read_json(claim_file)['execution_id'], claim_dir)
-        healed = self.find_execution_by_fingerprint(content_fingerprint)
-        if healed:
-            save(claim_file, {'execution_id': healed, 'healed_at_unix': time.time()})
-            return ('existing', healed, claim_dir)
-        timeout = self.policy.get('claim_timeout_seconds', 120)
-        if time.time() - claim_dir.stat().st_mtime < timeout:
-            return ('pending', None, claim_dir)
-        try:
-            claim_dir.rmdir()  # succeeds only while still empty (unpublished)
+            mutex = FileMutex(claim_dir / 'claim.lock')
+            mutex.__enter__()
         except OSError:
-            return ('pending', None, claim_dir)  # a claim.json appeared meanwhile
-        return self.claim_execution(content_fingerprint)
+            yield ('pending', None, claim_dir)
+            return
+        try:
+            claim_file = claim_dir / 'claim.json'
+            if claim_file.is_file():
+                yield ('existing', read_json(claim_file)['execution_id'], claim_dir)
+            else:
+                healed = self.find_execution_by_fingerprint(content_fingerprint)
+                if healed:
+                    save(claim_file, {'execution_id': healed, 'healed_at_unix': time.time()})
+                    yield ('existing', healed, claim_dir)
+                else:
+                    yield ('claim', None, claim_dir)
+        finally:
+            mutex.__exit__(None, None, None)
 
     def abandoned_confirmed(self, record):
         """R3(b): a cancel-outcome sidecar proving every known process is dead."""
@@ -397,6 +410,11 @@ class Server:
         state = self.snapshot(directory)
         owner = state.get('owner') or {}
         detail = {'owner': self.terminate_and_confirm(owner.get('pid'), owner.get('creation_time'))}
+        # Every KNOWN process must be confirmed, not just owner+business:
+        # the record also names the worker host (entry_v2.py:306).
+        worker = state.get('worker') or {}
+        if worker.get('pid'):
+            detail['worker'] = self.terminate_and_confirm(worker.get('pid'), worker.get('creation_time'))
         birth_file = directory / 'business-process.json'
         if birth_file.is_file():
             birth = read_json(birth_file)
@@ -508,13 +526,33 @@ class Server:
         total_bytes = path.stat().st_size  # O(1); never derived from a scan
         with path.open('rb') as source:
             prefix = source.read(4096)
-            source.seek(0)
             if encoding is None:
                 encoding = sniff_bom(prefix) or 'utf-8'
-            # R7: chunked binary reading with a carry buffer for characters
-            # split across chunk edges. A strict fault decodes only the sound
-            # prefix of the current chunk: a decode error BEYOND the requested
-            # range never fails an already-servable prefix.
+            # Normalize to a STATE-FREE explicit codec and skip BOM bytes.
+            # Per-chunk decoding of 'utf-16' would silently reinterpret
+            # BOM-less follow-up chunks with the host endianness (review
+            # finding 2): BE files must decode as utf-16-be end to end.
+            skip = 0
+            if encoding == 'utf-8-sig':
+                encoding, skip = 'utf-8', 3 if prefix.startswith(b'\xef\xbb\xbf') else 0
+            elif encoding == 'utf-16':
+                if prefix.startswith(b'\xff\xfe'):
+                    encoding, skip = 'utf-16-le', 2
+                elif prefix.startswith(b'\xfe\xff'):
+                    encoding, skip = 'utf-16-be', 2
+                else:
+                    encoding = 'utf-16-le'
+            source.seek(skip)
+            # R7: chunked binary reading with a carry buffer. Chunk-edge
+            # splits surface under THREE reasons depending on codec (GBK:
+            # 'incomplete multibyte sequence'; UTF-16 odd byte: 'truncated
+            # data'; partial char: 'unexpected end of data') — all are
+            # boundary events, never content faults. A strict fault decodes
+            # only the sound prefix of the current chunk, so an error BEYOND
+            # the requested range never fails an already-servable prefix.
+            BOUNDARY_REASONS = ('unexpected end of data',
+                                'incomplete multibyte sequence',
+                                'truncated data')
             carry = b''
             pending = ''
             line_index = 0
@@ -536,7 +574,7 @@ class Server:
                         text = data.decode(encoding, errors='strict')
                         carry = b''
                     except UnicodeDecodeError as error:
-                        if not eof and error.reason == 'unexpected end of data':
+                        if not eof and error.reason in BOUNDARY_REASONS:
                             text = data[:error.start].decode(encoding)
                             carry = data[error.start:]
                         else:
@@ -553,6 +591,17 @@ class Server:
                         pending = ''
                 elif eof:
                     pending = ''
+                # Giant-line guards (review finding 5): the quota must bind
+                # DURING accumulation, not after a full line has formed.
+                if pending and line_index + 1 >= start and len(pending.encode('utf-8')) > quota:
+                    return {'error': 'single_line_exceeds_quota',
+                            'line_number': line_index + 1,
+                            'line_bytes_at_least': len(pending.encode('utf-8')),
+                            'quota_bytes': quota,
+                            'note': 'Single line exceeded quota mid-stream; aborted before '
+                                    'full accumulation. Truncation is forbidden.'}
+                if pending and line_index + 1 < start and len(pending) > quota * 4:
+                    pending = ''  # skipped line: count it, never hold its bytes
                 for line in parts:
                     line_index += 1
                     if line_index < start:

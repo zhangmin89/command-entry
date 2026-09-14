@@ -43,7 +43,9 @@ if (-not (Test-Path -LiteralPath (Join-Path $repo 'server.py'))) { throw 'RepoRo
 if (-not (Test-Path -LiteralPath $livePolicy)) { throw "Live policy not found: $livePolicy" }
 
 # ---------- stage 1: build the candidate (nothing live is touched) ----------
-$stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+# Unique transaction id: a bare second-resolution stamp can collide across
+# concurrent runs (shared TEMP candidate name, backup dir overwrite).
+$stamp = (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + ([guid]::NewGuid().ToString('N').Substring(0, 6))
 $candidate = Join-Path $env:TEMP ("policy-candidate-" + $stamp + ".json")
 if ($AddProgram) {
     if (-not $ProgramPath) { throw '-ProgramPath is required with -AddProgram.' }
@@ -76,21 +78,22 @@ if (Test-Path -LiteralPath $bindingFile) {
 }
 Write-Output "Old pair archived: $backup"
 
-# ---------- stage 4: commit the candidate ----------
-if ($candidate -ne $livePolicy) {
-    Copy-Item -LiteralPath $candidate -Destination $livePolicy
-} else {
-    Write-Output 'Candidate IS the live policy: validation + re-pin only, nothing to commit.'
-}
-
-# ---------- stage 5: re-pin binding; any failure restores the old pair ----------
-$rebuilt = & $python -X utf8 (Join-Path $repo 'scripts\build_binding.py') --policy $livePolicy --out $bindingFile
-if ($LASTEXITCODE -ne 0) {
+# ---------- stages 4+5: commit, then re-pin. ANY mid-flight failure
+# (copy error, interpreter launch failure, non-zero exit) restores the old pair.
+try {
+    if ($candidate -ne $livePolicy) {
+        Copy-Item -LiteralPath $candidate -Destination $livePolicy -ErrorAction Stop
+    } else {
+        Write-Output 'Candidate IS the live policy: validation + re-pin only, nothing to commit.'
+    }
+    $rebuilt = & $python -X utf8 (Join-Path $repo 'scripts\build_binding.py') --policy $livePolicy --out $bindingFile
+    if ($LASTEXITCODE -ne 0) { throw "build_binding exited $LASTEXITCODE" }
+} catch {
     Copy-Item -LiteralPath (Join-Path $backup 'policy.json') -Destination $livePolicy -Force
     if (Test-Path -LiteralPath (Join-Path $backup 'binding.json')) {
         Copy-Item -LiteralPath (Join-Path $backup 'binding.json') -Destination $bindingFile -Force
     }
-    throw "Binding rebuild failed (exit $LASTEXITCODE); the old policy+binding pair was restored from $backup."
+    throw "Mid-flight failure ($($_)); the old policy+binding pair was restored from $backup."
 }
 Write-Output $rebuilt
 Write-Output 'Restart the exec server (restart the Codex session or the server process) for the new policy to take effect.'

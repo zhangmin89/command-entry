@@ -109,16 +109,17 @@ class ClaimProtocolTests(unittest.TestCase):
         content = {'operation': 'native', 'program': 'git', 'workdir': str(self.tmp.resolve()),
                    'args': ['--version']}
         fingerprint = common.digest(content)
-        outcome, _, claim_dir = self.server_a.claim_execution(fingerprint)
-        self.assertEqual(outcome, 'claim')  # A holds an UNFINISHED claim
-        outcome_b, exec_id, _ = self.server_b.claim_execution(fingerprint)
-        self.assertEqual(outcome_b, 'pending')
-        self.assertIsNone(exec_id)
-        with self.assertRaises(Exception) as caught:
-            self.server_b.tool_start({'operation': 'native', 'program': 'git',
-                                      'workdir': str(self.tmp), 'args': ['--version']})
-        self.assertIn('claim_pending_unconfirmed', str(caught.exception))
-        claim_dir.rmdir()  # test cleanup: release the unfinished claim
+        with self.server_a.claim_section(fingerprint) as section_a:
+            self.assertEqual(section_a[0], 'claim')  # A holds the section
+            with self.server_b.claim_section(fingerprint) as section_b:
+                self.assertEqual(section_b[0], 'pending')  # live contention
+            with self.assertRaises(Exception) as caught:
+                self.server_b.tool_start({'operation': 'native', 'program': 'git',
+                                          'workdir': str(self.tmp), 'args': ['--version']})
+            self.assertIn('claim_pending_unconfirmed', str(caught.exception))
+        # Section released without publishing: the claim is simply re-taken.
+        with self.server_b.claim_section(fingerprint) as section_c:
+            self.assertEqual(section_c[0], 'claim')
 
     def test_terminal_republishes_claim_to_new_intent(self):
         form = {'operation': 'native', 'program': 'git', 'workdir': str(self.tmp),
@@ -184,6 +185,42 @@ class UnknownBlockingTests(unittest.TestCase):
         self.assertFalse(fresh.get('dedup_blocked'))
         self.server.tool_cancel({'execution_id': fresh['execution_id']})
 
+    def test_cancel_confirms_worker_too(self):
+        # R3 follow-up: 'all known processes' includes the worker host named
+        # in the record, not just owner + business-process.json.
+        execution_id = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc'
+        serve_dir = self.server.serve_root / execution_id
+        serve_dir.mkdir(parents=True)
+        business = {'task_ref': 't', 'step_ref': 's', 'operation': 'native',
+                    'cwd': str(self.tmp), 'program': 'git', 'args': ['--version']}
+        content = {'operation': 'native', 'program': 'git',
+                   'workdir': str(self.tmp.resolve()), 'args': ['--version']}
+        fingerprint = common.digest(content)
+        common.write_new(serve_dir / 'request.json',
+                         {'schema_version': 2, 'business': business,
+                          'content_fingerprint': fingerprint})
+        record = self.tmp / '.codex-command-records' / execution_id
+        record.mkdir(parents=True)
+        # Fake pids: OpenProcess fails with ERROR_INVALID_PARAMETER, which
+        # terminate_and_confirm treats as confirmed dead by observation.
+        common.write_new(record / 'result.json', {
+            'state': 'running', 'execution_id': execution_id,
+            'request_id': 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+            'owner': {'pid': 99999901, 'creation_time': 111},
+            'worker': {'pid': 99999902, 'creation_time': 222},
+            'process': {'exit_code': None}, 'subgoal': {'status': 'unknown'}})
+        form = {'operation': 'native', 'program': 'git', 'workdir': str(self.tmp),
+                'args': ['--version']}
+        blocked = self.server.tool_start(form)
+        self.assertTrue(blocked['dedup_blocked'])
+        cancelled = self.server.tool_cancel({'execution_id': execution_id})
+        self.assertIn('worker', cancelled['detail'])
+        self.assertTrue(cancelled['detail']['worker']['confirmed_dead'])
+        self.assertTrue(cancelled['confirmed_dead'])
+        fresh = self.server.tool_start(form)
+        self.assertNotEqual(fresh['execution_id'], execution_id)
+        until_terminal(Path(fresh['record_dir']))
+
 
 class StartFailureSurfaceTests(unittest.TestCase):
     """R5: failed starts keep the execution id recoverable."""
@@ -218,6 +255,25 @@ class StartFailureSurfaceTests(unittest.TestCase):
         cancelled = self.server.tool_cancel({'execution_id': result['execution_id']})
         self.assertEqual(cancelled['cancel_action'], 'already_terminal')
         self.assertEqual(cancelled['state'], 'not_started')
+
+    def test_spawn_oserror_records_failure_and_unlocks(self):
+        # R5 follow-up: even a raw Popen OSError must persist a serve-error
+        # tied to the id, so the next start is a new intent, not a dead end.
+        with mock.patch.object(server_module.subprocess, 'Popen',
+                               side_effect=OSError(193, 'bad exe')):
+            result = self.server.tool_start({'operation': 'native', 'program': 'git',
+                                             'workdir': str(self.tmp), 'args': ['--version']})
+        self.assertEqual(result['state'], 'start_failed')
+        self.assertIn('execution_id', result)
+        serve_error = self.server.serve_root / result['execution_id'] / 'serve-error.json'
+        self.assertTrue(serve_error.is_file())
+        with mock.patch.object(server_module.subprocess, 'Popen',
+                               side_effect=OSError(193, 'bad exe')):
+            again = self.server.tool_start({'operation': 'native', 'program': 'git',
+                                            'workdir': str(self.tmp), 'args': ['--version']})
+        self.assertNotEqual(again['execution_id'], result['execution_id'])
+        cancelled = self.server.tool_cancel({'execution_id': result['execution_id']})
+        self.assertEqual(cancelled['cancel_action'], 'already_terminal')
 
 
 class StreamingReadTextTests(unittest.TestCase):
@@ -292,6 +348,62 @@ class StreamingReadTextTests(unittest.TestCase):
             self.assertIn('file_outside_read_roots', str(caught.exception))
         finally:
             self.server.policy['read_roots'] = None
+
+    def test_utf16_be_cross_chunk_content_exact(self):
+        # Review finding 2: BOM-less follow-up chunks must keep BE semantics.
+        lines = ['行-%03d 中文填充内容填充内容填充内容填充内容填充填充\n' % i
+                 for i in range(400)]
+        content = ''.join(lines)
+        path = self.tmp / 'be16.txt'
+        path.write_bytes(b'\xfe\xff' + content.encode('utf-16-be'))  # >64KB, spans chunks
+        self.server.policy['read_quota_bytes'] = 1048576
+        try:
+            result = self.read(file=str(path), max_lines=1000)
+            self.assertEqual(result['encoding_used'], 'utf-16-be')
+            self.assertEqual(result['text'], content)
+            self.assertEqual(result['total_lines'], 400)
+            self.assertFalse(result['decoding_loss'])
+        finally:
+            self.server.policy['read_quota_bytes'] = 200
+
+    def test_gbk_char_split_at_chunk_boundary(self):
+        # '中' lead byte lands exactly at the 65536 edge: a boundary event,
+        # not a content fault (review finding 2, GBK reason variant).
+        head = b'a' * 65535
+        path = self.tmp / 'gbk-split.txt'
+        path.write_bytes(head + '中\n'.encode('gbk') + b'second\n')
+        self.server.policy['read_quota_bytes'] = 1048576
+        try:
+            result = self.read(file=str(path), encoding='gbk', max_lines=1000)
+            self.assertNotIn('error', result)
+            self.assertEqual(result['lines_served'], 2)
+            self.assertEqual(result['text'], 'a' * 65535 + '中\nsecond\n')
+        finally:
+            self.server.policy['read_quota_bytes'] = 200
+
+    def test_utf16_le_surrogate_split_at_boundary(self):
+        head = 'a' * 32767  # 65534 bytes in utf-16-le; pair straddles the edge
+        text = head + '😀\n第二行\n'
+        path = self.tmp / 'le16-split.txt'
+        path.write_bytes(text.encode('utf-16-le'))  # no BOM: explicit codec
+        self.server.policy['read_quota_bytes'] = 1048576
+        try:
+            result = self.read(file=str(path), encoding='utf-16-le', max_lines=1000)
+            self.assertNotIn('error', result)
+            self.assertEqual(result['text'], text)
+            self.assertEqual(result['lines_served'], 2)
+        finally:
+            self.server.policy['read_quota_bytes'] = 200
+
+    def test_giant_single_line_aborts_before_full_accumulation(self):
+        # Review finding 5: the quota must bind mid-stream, not after the
+        # full line has formed.
+        path = self.tmp / 'giant.txt'
+        path.write_bytes(b'x' * 262144)  # quota is 200 in this class
+        result = self.read(file=str(path))
+        self.assertEqual(result['error'], 'single_line_exceeds_quota')
+        self.assertEqual(result['line_number'], 1)
+        self.assertLess(result['line_bytes_at_least'], 262144)
 
 
 class WaitObservationTests(unittest.TestCase):
