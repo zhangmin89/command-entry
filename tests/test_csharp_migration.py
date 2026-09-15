@@ -468,6 +468,37 @@ class CSharpMigrationTests(unittest.TestCase):
                 self.assertEqual(detail['kind'], 'Invalid')
                 self.assertEqual(detail['reason'], reason)
 
+    def test_policy_update_reports_missing_maintenance_dependencies(self):
+        for name, value, expected in (
+            ('missing-key', None, b'non-empty python interpreter path'),
+            ('null', None, b'non-empty python interpreter path'),
+            ('blank', ' ', b'non-empty python interpreter path'),
+            ('wrong-type', 42, b'non-empty python interpreter path'),
+            ('missing-interpreter', str(self.directory / 'missing-python.exe'), b'Python interpreter not found'),
+            ('missing-validator', sys.executable, b'Policy validator not found'),
+        ):
+            with self.subTest(name=name):
+                repo = self.directory / name
+                repo.mkdir()
+                shutil.copyfile(EXE, repo / 'CommandEntry.exe')
+                (repo / 'scripts').mkdir()
+                shutil.copyfile(ROOT / 'scripts/build-dotnet-binding.ps1', repo / 'scripts/build-dotnet-binding.ps1')
+                if name != 'missing-validator':
+                    shutil.copyfile(ROOT / 'scripts/validate_policy.py', repo / 'scripts/validate_policy.py')
+                candidate = dict(self.policy, python=value)
+                if name == 'missing-key':
+                    del candidate['python']
+                policy = repo / 'policy.json'
+                binding = repo / 'binding.json'
+                policy.write_text(json.dumps(candidate), encoding='utf-8')
+                binding.write_bytes(b'previous binding')
+                previous = (policy.read_bytes(), binding.read_bytes())
+                failed = self.powershell(ROOT / 'update-policy.ps1', RepoRoot=repo)
+                self.assertNotEqual(failed.returncode, 0)
+                self.assertIn(expected, failed.stderr)
+                self.assertEqual((policy.read_bytes(), binding.read_bytes()), previous)
+                self.assertFalse((repo / 'policy-backups').exists())
+
     def test_dotnet_policy_update_repins_and_rolls_back_pair(self):
         repo = self.directory / 'dotnet-release'
         repo.mkdir()

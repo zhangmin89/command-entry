@@ -47,6 +47,15 @@ if ($dotnetRuntime -and -not (Test-Path -LiteralPath (Join-Path -Path $repo -Chi
     throw 'The .NET runtime requires scripts\build-dotnet-binding.ps1.'
 }
 if (-not (Test-Path -LiteralPath $livePolicy)) { throw "Live policy not found: $livePolicy" }
+$liveDefinition = Get-Content -LiteralPath $livePolicy -Raw -Encoding utf8 | ConvertFrom-Json -AsHashtable
+if (-not $liveDefinition.ContainsKey('python') -or $liveDefinition['python'] -isnot [string] -or
+    [string]::IsNullOrWhiteSpace($liveDefinition['python'])) {
+    throw 'Policy maintenance requires a non-empty python interpreter path in the live policy.'
+}
+$python = $liveDefinition['python']
+if (-not (Test-Path -LiteralPath $python -PathType Leaf)) { throw "Policy maintenance Python interpreter not found: $python" }
+$validator = Join-Path -Path $repo -ChildPath 'scripts\validate_policy.py'
+if (-not (Test-Path -LiteralPath $validator -PathType Leaf)) { throw "Policy validator not found: $validator" }
 
 # ---------- stage 1: build the candidate (nothing live is touched) ----------
 # Unique transaction id: a bare second-resolution stamp can collide across
@@ -67,10 +76,9 @@ if ($AddProgram) {
 } else {
     Copy-Item -LiteralPath $livePolicy -Destination $candidate
 }
-$python = (Get-Content -LiteralPath $livePolicy -Raw -Encoding utf8 | ConvertFrom-Json -AsHashtable)['python']
 
 # ---------- stage 2: validate the candidate (failure = zero live change) ----------
-$validation = & $python -X utf8 (Join-Path $repo 'scripts\validate_policy.py') $candidate
+$validation = & $python -X utf8 $validator $candidate
 $exit = $LASTEXITCODE
 Write-Output $validation
 if ($exit -ne 0) { throw 'Candidate validation failed; nothing was deployed and the live policy is untouched.' }

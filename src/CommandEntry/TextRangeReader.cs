@@ -6,6 +6,9 @@ namespace CommandEntry;
 
 internal static class TextRangeReader
 {
+    internal static int ReadBlock(Stream source, Span<byte> buffer) =>
+        source.ReadAtLeast(buffer, buffer.Length, throwOnEndOfStream: false);
+
     internal static JsonObject Read(JsonObject form, JsonObject policy)
     {
         form.Known(["file", "start_line", "max_lines", "encoding"]);
@@ -40,7 +43,7 @@ internal static class TextRangeReader
             while (charIndex >= charCount)
             {
                 if (eof) return -1;
-                if (byteIndex == byteCount) { byteCount = source.Read(bytes); byteIndex = 0; }
+                if (byteIndex == byteCount) { byteCount = ReadBlock(source, bytes); byteIndex = 0; }
                 bool final = byteCount == 0;
                 charCount = decoder.GetChars(final ? ReadOnlySpan<byte>.Empty : bytes.AsSpan(byteIndex++, 1), characters, final);
                 charIndex = 0;

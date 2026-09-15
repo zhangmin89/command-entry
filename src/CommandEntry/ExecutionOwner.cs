@@ -150,7 +150,7 @@ internal static class ExecutionOwner
             }
             catch (OperationCanceledException) when (finished.IsCancellationRequested) { }
         }
-        try
+        async Task Execute()
         {
             var plan = await ExecutionPlan.Create(request, policy, locks, directory);
             result["argv"] = new JsonArray(new[] { plan.Executable }.Concat(plan.Arguments).Select(a => (JsonNode?)JsonValue.Create(a)).ToArray());
@@ -197,9 +197,8 @@ internal static class ExecutionOwner
             var codes = policy["operations"]![request["operation"].String()]?["acceptable_exit_codes"] as JsonArray ?? new JsonArray(0);
             result["operation_result"] = new JsonObject { ["acceptable_exit"] = result["state"].Text() == "exited" ? codes.Any(c => c.Integer("invalid_exit_code") == host.ExitCode) : null };
             result["subgoal"] = result["state"].Text() == "exited" ? ExecutionRecords.Acceptance(request) : new JsonObject { ["status"] = "unknown" };
-            Persist();
         }
-        catch (Exception error) when (ExecutionRecords.Handled(error))
+        async Task Fail(Exception error)
         {
             result["state"] = host is null ? "rejected" : "tool_error"; result["error"] = ExecutionRecords.Error(error); result["bindings"] = locks.Bindings.Copy();
             await ExecutionCleanup.PersistFailure(result, async () =>
@@ -210,6 +209,7 @@ internal static class ExecutionOwner
                 if (host is not null) { await host.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(policy.Int("cleanup_seconds", 10))); result["process"]!["exit_code"] = host.ExitCode; }
             }, Persist);
         }
+        try { await ExecutionCleanup.Complete(Execute, Fail, Persist); }
         finally
         {
             finished.Cancel(); job?.Dispose(); host?.Dispose();

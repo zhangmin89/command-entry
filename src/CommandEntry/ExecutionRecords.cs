@@ -16,7 +16,8 @@ internal static class ExecutionRecords
         InvalidRequest => "Invalid", JsonException or FormatException => "ValueError", IOException or Win32Exception or UnauthorizedAccessException => "OSError",
         _ => error.GetType().Name
     };
-    internal static JsonObject Error(Exception error) => new()
+    internal static JsonObject Error(Exception error) => error is ExecutionPersistenceFailure failure
+        ? (JsonObject)failure.Detail.Copy() : new()
     {
         ["kind"] = ErrorKind(error), ["reason"] = OutputCapture.Slice(OutputCapture.RedactLine(error.Message), 0, 600)
     };

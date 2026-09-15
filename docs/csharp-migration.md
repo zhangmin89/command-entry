@@ -51,8 +51,13 @@ dotnet artifacts/command-entry-conformance/CommandEntry.dll conformance
 
 Run these from this repository root. The harness uses its configured Python
 interpreter, a fixed random seed, and retained cleanup records. Publish without
-`CONFORMANCE` for deployment. `scripts/check-read-text-parity.py` records both
-implementations' CR/LF, decoding and block-boundary results for diagnosis.
+`CONFORMANCE` for deployment. The harness also checks final-write failures,
+combined cleanup/write failures, and streams that return short reads.
+`scripts/check-read-text-parity.py` records both implementations' CR/LF,
+decoding and block-boundary results for diagnosis. It defaults to the AOT
+publish; `COMMAND_ENTRY_TEST_EXE` can select another executable without changing
+the test module's global settings. Missing executables are rejected before
+creating a diagnostic directory.
 
 ## Runtime layout
 
@@ -92,11 +97,19 @@ Python sentinel and policy maintenance scripts remain separate components.
   behavior: a fault before the CR line is completed rejects the range; a fault
   later in an already-loaded block is reported as `decode_warning` after a
   complete range. It does not scan subsequent blocks just to find warnings.
+  Each block is filled across short reads until its size limit or EOF.
 - MCP error messages are redacted, so credential-shaped diagnostic text can
   be replaced. This is intentional. A corrupt `wait-state.json` remains a
   structured failure requiring operator investigation; it is never deleted
   or silently reset. Cleanup errors preserve the primary error in the record
   and do not turn an unconfirmed process exit into a successful exit.
+- Final persistence runs outside the business-error handler, so a write fault
+  does not relabel a completed execution as `tool_error`. A failed write still
+  leaves the last durable snapshot; it does not prove the terminal state was
+  saved. If cleanup and persistence both fail, `execution_state_persistence_failed`
+  carries bounded, redacted `primary_error`, `cleanup_error` and
+  `persistence_error` details. An otherwise unhandled cleanup exception is
+  rethrown after successful persistence; it is not silently treated as handled.
 - Existing path, program, syntax, retry and acceptance checks remain in the
   execution path. Policy checks are not replaced by the SDK or process API.
 - Agent Governance Toolkit and SecureString are not introduced. The SDK and
@@ -138,6 +151,8 @@ For later policy updates, install the updated `update-policy.ps1`,
 `scripts/build-dotnet-binding.ps1` and the existing `scripts/validate_policy.py`
 alongside the release. Policy maintenance still uses the configured Python
 interpreter and the unchanged policy validation rules. Invoke the update script
+only with the configured maintenance interpreter and validator present; missing
+dependencies are reported before candidate preparation or live changes. Invoke it
 through the approved PowerShell script operation with a JSON parameters file.
 `RepoRoot` is the release root; `PolicyPath` is the reviewed candidate policy,
 or use the existing `AddProgram` parameters for an approved program change.
