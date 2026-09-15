@@ -46,7 +46,7 @@ internal static partial class TestRunner
         var cases = Assembly.GetExecutingAssembly().GetTypes().SelectMany(type => type.GetMethods(BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic))
             .Where(method => method.IsDefined(typeof(CaseAttribute))).OrderBy(method => method.DeclaringType!.Name).ThenBy(method => method.Name).ToArray();
         Check.True(cases.Length > 0, "No tests discovered");
-        int passed = 0;
+        int passed = 0, failed = 0;
         foreach (var method in cases)
         {
             string name = method.DeclaringType!.Name + "." + method.Name;
@@ -60,18 +60,18 @@ internal static partial class TestRunner
             catch (Exception error)
             {
                 Console.Error.WriteLine($"FAIL {name}: {(error is TargetInvocationException ? error.InnerException : error)}");
-                Console.WriteLine($"RESULT passed={passed} failed=1 remaining={cases.Length - passed - 1} total={cases.Length}");
-                return 1;
+                failed++;
             }
         }
-        Console.WriteLine($"RESULT passed={passed} failed=0 total={cases.Length}");
-        return 0;
+        Console.WriteLine($"RESULT passed={passed} failed={failed} total={cases.Length}");
+        return failed == 0 ? 0 : 1;
     }
 
     private static async Task<int> Probe(string[] args)
     {
         switch (args[0])
         {
+            case "text": Console.WriteLine(args[1]); Console.Error.WriteLine(args[1]); return 0;
             case "echo":
                 using (var input = new MemoryStream())
                 {

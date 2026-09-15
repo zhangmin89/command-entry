@@ -131,6 +131,14 @@ internal sealed partial class ExecutionServer
         return failure;
     }
 
+    private JsonObject? StartupFailureWithoutResult(string id, string directory)
+    {
+        string result = Path.Combine(directory, "result.json");
+        if (File.Exists(result)) return null;
+        var failure = StartupFailure(id);
+        return File.Exists(result) ? null : failure;
+    }
+
     internal async Task<JsonObject> Dispatch(string name, JsonObject form)
     {
         await calls.WaitAsync();
@@ -193,12 +201,16 @@ internal sealed partial class ExecutionServer
     private JsonObject Existing(string id, bool collision = false)
     {
         string directory = Locate(id);
-        var state = Directory.Exists(directory) ? ExecutionRecords.Snapshot(directory) : new JsonObject { ["state"] = "unknown", ["reason"] = "record_missing" };
+        var state = File.Exists(Path.Combine(directory, "result.json")) ? ExecutionRecords.Snapshot(directory) : new JsonObject { ["state"] = "unknown", ["reason"] = "record_missing" };
         string name = state["state"].String();
         bool blocked = collision ? !ExecutionRecords.ConfirmedTerminal.Contains(name) && !Abandoned(directory) : name is "unknown" or "tool_error";
         return new() { ["execution_id"] = id, ["state"] = name, ["in_flight_dedup"] = !blocked, ["dedup_blocked"] = blocked,
             ["orphan_guaranteed"] = orphanGuaranteed, ["record_dir"] = directory,
-            ["note"] = blocked ? "Instance state is unconfirmed; a duplicate is NOT started. Use cancel to confirm abandonment before a new intent." : "Same content still running; returning the existing id." };
+            ["note"] = blocked
+                ? !File.Exists(Path.Combine(directory, "result.json"))
+                    ? "Execution record is missing; a duplicate is NOT started. Preserve the claim and request; manual recovery of the original evidence is required."
+                    : "Instance state is unconfirmed; a duplicate is NOT started. Use cancel to confirm abandonment before a new intent."
+                : "Same content still running; returning the existing id." };
     }
 
     private async Task<JsonObject> Start(JsonObject form)
@@ -228,8 +240,10 @@ internal sealed partial class ExecutionServer
             string? existing = ClaimIdentity(fingerprint, claimPath);
             if (existing is not null)
             {
+                Require(File.Exists(Path.Combine(serveRoot, existing, "request.json")),
+                    "claim_publication_missing: " + existing + "; preserve the claim; manual recovery of the original request is required.");
                 string record = Locate(existing); string name = ExecutionRecords.Snapshot(record)["state"].String();
-                bool notStarted = !Directory.Exists(record) && File.Exists(Path.Combine(serveRoot, existing, "serve-error.json"));
+                bool notStarted = StartupFailureWithoutResult(existing, record) is not null;
                 if (!notStarted && !ExecutionRecords.ConfirmedTerminal.Contains(name) && !Abandoned(record)) return Existing(existing);
             }
             string task = "mcp-direct", step; string? previousRequest = null; long attempt = 0;
@@ -249,6 +263,8 @@ internal sealed partial class ExecutionServer
             if (previousRequest is not null) business["previous_request"] = previousRequest;
             var request = RequestShape.Shape(business); requestId = request["request_id"].String(); id = ExecutionId(requestId);
             Require(!policy["require_orphan_guarantee"].IsTrue() || orphanGuaranteed, "orphan_guarantee_required_but_unavailable");
+            Require(!Path.Exists(Path.Combine(BusinessPaths.Context(policy, cwd), id)),
+                "execution_identity_already_recorded: " + id + "; preserve existing evidence; manual recovery of the original publication is required.");
             inputDirectory = Path.Combine(serveRoot, id);
             if (!DirectoryCreation.TryCreateNew(inputDirectory))
             {

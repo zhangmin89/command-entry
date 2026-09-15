@@ -54,7 +54,10 @@ CommandEntry.exe sentinel --records <hook-records-path>
    status/output. Verify a shell hook event produces a deny decision and an
    envelope-only sentinel record.
 8. Keep `serve_root` and `record_root` aligned with the previous installation
-   when existing execution IDs must remain queryable.
+   when existing execution IDs must remain queryable. Preserve a consistent
+   backup of claims, published requests and execution records, including their
+   sidecars. Retain the policy mappings needed to resolve each original cwd to
+   its record root; copying one root alone does not preserve the execution view.
 
 The sentinel reads no policy or binding and never records command content.
 Its executable now shares the server binary covered by the runtime binding;
@@ -79,6 +82,20 @@ Create bindings with `CommandEntry.exe build-binding --runtime-root PATH
 have been removed; update automation to call the native subcommands. Python
 and PowerShell interpreters are not needed for maintenance.
 
+Program execution uses the `programs` mappings. The top-level `python` and
+`powershell` fields remain for legacy template/test compatibility;
+`claim_timeout_seconds` and `programs.*.wait_category` are also legacy fields.
+They do not configure interpreter execution, claim expiry or active MCP wait
+behavior. Current waiting uses `wait_budget_seconds`,
+`wait_poll_interval_seconds` and `wait_stop_after_no_progress`.
+
+The `metrics` command reports `complete`, `hook.unparsed_records` and
+`server.unparsed_event_lines`. Malformed JSON or non-object records are
+counted without changing their files. Decision totals and rates use only
+parsed records; `complete: false` means the report has missing input data.
+Filesystem access and text-decoding failures still surface as errors; the
+partial-report behavior covers JSON parsing/shape failures after decoding.
+
 The fixed publication-maintenance command defaults to preview and requires
 stopped C# runtime processes before applying. It refuses changed claims,
 occupied destinations, unexpected record contents and invalid bindings.
@@ -93,7 +110,24 @@ Do not mix an old binding with new executable bytes.
 
 Keep execution records. An unknown execution remains unconfirmed even if its
 server disappeared; use its existing cancellation flow to confirm the known
-process instances are dead. Source migration does not reset those records.
+process instances are dead. If original records are missing, preserve claims
+and requests for manual recovery; cancellation cannot establish process death
+from absent evidence. Do not infer claim expiry from directory age. Source
+migration does not reset those records or deploy a recovery command.
+
+If a claim remains but its published request is missing, startup reports
+`claim_publication_missing`. If publication history and claims are lost but a
+derived execution ID already has a record, it reports
+`execution_identity_already_recorded`. If publication remains but the result
+is missing without a valid startup-failure sidecar, duplicate work stays
+blocked. Restoring file presence alone does not establish process death or
+validate the association between the request, bound inputs and outcome.
+
+Mutable snapshot replacement uses Windows `FileRenameInfoEx` with replace and
+POSIX semantics. Validate the held-reader regression on the destination OS
+and filesystem before deployment. Unsupported information classes, filesystem
+restrictions and other replacement errors surface as failures; error 87 is
+not silently treated as proof that a compatibility fallback is appropriate.
 
 The accepted Job, network and write-fence limitations remain documented in
 [residual risks](residual-risks.md).

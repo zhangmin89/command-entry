@@ -32,13 +32,16 @@ internal sealed partial class OutputCapture : IDisposable
 
     [GeneratedRegex(@"(?:password|passwd|api[_-]?key|access[_-]?token|refresh[_-]?token|authorization|cookie|secret)\s*[=:]", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex Credential();
-    [GeneratedRegex(@"\bBearer\s+\S+", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"(?<!(?-i:[A-Za-z0-9_]))Bearer\s+\S+", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex Bearer();
-    [GeneratedRegex(@"\b(?:sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9_]{16,}|eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)")]
+    [GeneratedRegex(@"(?<![A-Za-z0-9_])(?:sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9_]{16,}|eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)")]
     private static partial Regex Token();
+    [GeneratedRegex(@"((?<!(?-i:[A-Za-z0-9_]))[a-z][a-z0-9+.-]*://)[^/\s?#]*@", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex UrlUserInfo();
 
     internal static string RedactLine(string line) => Credential().IsMatch(line)
-        ? "[REDACTED credential line]\n" : Token().Replace(Bearer().Replace(line, "[REDACTED bearer]"), "[REDACTED]");
+        ? "[REDACTED credential line]\n" : Token().Replace(Bearer().Replace(
+            UrlUserInfo().Replace(line, "$1[REDACTED userinfo]@"), "[REDACTED bearer]"), "[REDACTED]");
 
     internal static string Slice(string text, long start, long count) =>
         string.Concat(text.EnumerateRunes().Skip((int)Math.Min(start, int.MaxValue)).Take((int)Math.Min(count, int.MaxValue)).Select(r => r.ToString()));

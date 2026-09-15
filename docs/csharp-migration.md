@@ -35,6 +35,7 @@ validation remain unchanged.
 | Publication maintenance preview, blockers, backup, quarantine | PublicationMaintenanceTests |
 | Numeric and text parity | ContractTests + Fixtures/reference.json |
 | C# conformance cleanup/write failures and short reads | CleanupTests |
+| Environment collisions, Unicode-prefix redaction, JSON replacement/cleanup, missing history, invalid failure records, startup-failure queries, owner-exit snapshots, metrics completeness and query fields | AuditRegressionTests.ConfirmedAuditRegressions (17 independent checks) |
 | Interpreter subprocess arguments, binary stdin, cwd, streams and exit codes | ScriptTests.ExternalInterpretersPreserveProcessContract |
 | Embedded PowerShell diagnostics and special-character paths | ScriptTests.EmbeddedPowerShellErrorsRemainTextAndInvalidSourceDoesNotExecute |
 | Syntax errors from actual interpreter execution | ScriptTests.RuntimeSyntaxErrorsAreRetainedAndBatchNeverRuns |
@@ -45,6 +46,9 @@ The fixed reference JSON was exported from the original implementation before
 its removal: 281 finite double values (seed 20260915), five prepared requests,
 45 text-read cases and redaction examples. Tests use these independent expected
 values directly; they do not execute a reference implementation.
+The legacy query/read shapes in `RequestShape` remain for these frozen
+compatibility fixtures. Active MCP tools validate their own fields; query
+tools accept an execution ID without an ignored `cwd` field.
 
 The suite retains execution evidence under
 `.codex-command-records/csharp-test-*`. Synthetic records used for maintenance
@@ -88,9 +92,21 @@ dotnet build tests/CommandEntry.Tests.csproj --configuration Release --verbosity
 dotnet tests/bin/Release/net10.0-windows/win-x64/CommandEntry.Tests.dll --root <repo-root> --server <repo-root>/src/CommandEntry/bin/Release/net10.0-windows/win-x64/CommandEntry.exe
 ~~~
 
-The runner executes test groups sequentially, reports failures with their
-exceptions, and exits 1 at the first failure. Its `RESULT` line reports passed,
-failed and remaining groups. It has no external test SDK or adapter.
+The runner executes test groups sequentially and reports failures with their
+exceptions while continuing through the remaining groups. Its `RESULT` line
+reports passed, failed and total groups; the exit code is 1 if any group
+failed, otherwise 0. It has no external test SDK or adapter.
+
+The audit checks hold a share-delete reader open throughout a real `Save`,
+assert old/new snapshot contents, and separately verify that bound inputs and
+exclusive locks still block replacement. They also hold an execution result
+open while the selected server binary publishes its terminal state, and check
+Unicode-prefix redaction through that binary's stdout/stderr MCP responses.
+These process checks exercise the published executable during the AOT run.
+A deterministic observation callback reproduces an owner publishing a terminal
+record between the initial snapshot read and the process observation; the
+query must return that published terminal record and keep unconfirmed work
+unknown when no terminal record was published.
 
 ## Native AOT
 

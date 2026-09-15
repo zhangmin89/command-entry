@@ -44,15 +44,36 @@ NOT source: every machine rebuilds it locally with
 from git tracking (`git rm --cached` + .gitignore); the local file is kept,
 never synced between machines.
 
-## Housekeeping: _claims directories accumulate
+## Retained evidence and missing history
 
-`serve_root/_claims/` holds one directory per unique content fingerprint,
-forever. Functionally harmless (reused across retries of the same content),
-but unique-content churn (timestamped scripts, random args) grows the
-directory over time. Pruning is safe: a claim dir whose referenced execution
-is in a confirmed terminal state — or that is empty and older than
-`claim_timeout_seconds` — may simply be deleted; it is recreated on demand.
-No code change needed; revisit if serve_root growth becomes visible.
+`serve_root/_claims/` holds one directory per unique content fingerprint.
+Claims, requests, execution records and logs accumulate; there is no automatic
+retention limit or general cleanup protocol. `claim_timeout_seconds` is a
+legacy template field, not proof that a claim can be released safely.
+
+If a claim's original request is missing, startup rejects with
+`claim_publication_missing`. If history loss would derive an ID with an
+existing execution record, startup rejects with
+`execution_identity_already_recorded`. Neither condition starts another
+process or releases the claim. Missing result files leave process liveness unknown;
+`wait` reports `unconfirmed`, and `cancel` cannot confirm death without the
+original evidence. Preserve all remaining files for manual recovery of the
+original request/record set. A valid recorded startup failure with no result
+is handled separately, whether or not the record directory exists. Existing
+results, including `unknown`, take precedence over startup-failure sidecars.
+There is no automatic ghost recovery or manual recovery command.
+
+Mutable JSON readers use read/delete sharing. The writer uses
+`SetFileInformationByHandle(FileRenameInfoEx)` with replace/POSIX flags: an
+open share-delete reader keeps its old snapshot while new opens see the
+replacement. This does not allow concurrent in-place writers. Bound inputs
+retain their separate replacement/write locks. Sharing/access conflicts are
+retried up to five attempts with four 20 ms waits; other errors propagate.
+The current OS/filesystem is exercised by held-reader and concurrent tests;
+this does not establish compatibility with every Windows filesystem or
+release. A failed `Save` removes only
+the unpublished temporary file created by that call; historical records and
+unrelated temporary files are retained.
 
 ## working_roots narrowing (this stage's debt payment)
 
@@ -60,7 +81,21 @@ The deployed policy must narrow `working_roots` from the template's drive
 roots to the actual project directories before the observation week.
 `read_roots` defaults to the same set and may be tightened independently.
 Keep the server, policy, binding, logs and record roots outside every
-workspace listed in `working_roots` — the cage keys stay out of the cage.
+workspace listed in `working_roots`. This reduces accidental overlap but does
+not make those files inaccessible to business processes: filesystem access
+still follows the process user's Windows permissions.
+
+## Inherited environment
+
+Owner and business processes inherit the server environment. The launcher
+resolves case-insensitive duplicate names deterministically, and output/error
+redaction covers scheme-qualified URL credentials, Bearer values and supported
+token patterns after non-ASCII prefixes. ASCII letters, digits and underscore
+still prevent a match from starting inside an identifier. Schemeless
+`//user:password@host` forms are outside the URL rule's current scope.
+Neither change isolates credentials already present in the environment from a
+business process. Redaction is pattern-based and is not a general secret
+detector. Review the server's launch environment as part of deployment.
 
 ## AppContainer pre-study conclusion
 

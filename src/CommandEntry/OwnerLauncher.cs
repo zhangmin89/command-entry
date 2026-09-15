@@ -45,11 +45,7 @@ internal static partial class OwnerLauncher
         // Native creation flags are unavailable on ProcessStartInfo. Only the
         // fixed owner executable crosses this boundary; business argv never does.
         // Pass the input reference in the child environment, not a command string.
-        var environment = new SortedDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        foreach (DictionaryEntry pair in Environment.GetEnvironmentVariables())
-            environment.Add((string)pair.Key, (string)pair.Value!);
-        environment[InputVariable] = inputDirectory;
-        char[] block = (string.Concat(environment.Select(pair => pair.Key + "=" + pair.Value + '\0')) + '\0').ToCharArray();
+        char[] block = EnvironmentBlock(Environment.GetEnvironmentVariables(), inputDirectory);
         char[] command = ('"' + executable + "\"\0").ToCharArray();
         var startup = new StartupInfo { Size = (uint)Marshal.SizeOf<StartupInfo>(), Flags = 1, ShowWindow = 0 };
         if (CreateProcessW(executable, command, 0, 0, 0, flags | 0x400, block, cwd, in startup, out var info) == 0)
@@ -57,5 +53,16 @@ internal static partial class OwnerLauncher
         using var process = new SafeProcessHandle(info.Process, ownsHandle: true);
         using var thread = new SafeFileHandle(info.Thread, ownsHandle: true);
         return checked((int)info.ProcessId);
+    }
+
+    internal static char[] EnvironmentBlock(IDictionary source, string inputDirectory)
+    {
+        var environment = new SortedDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        // Choose the ordinal-first spelling for each Windows case-insensitive name.
+        // This keeps collision handling independent of enumeration order.
+        foreach (DictionaryEntry pair in source.Cast<DictionaryEntry>().OrderBy(pair => (string)pair.Key, StringComparer.Ordinal))
+            environment.TryAdd((string)pair.Key, (string)pair.Value!);
+        environment[InputVariable] = inputDirectory;
+        return (string.Concat(environment.Select(pair => pair.Key + "=" + pair.Value + '\0')) + '\0').ToCharArray();
     }
 }

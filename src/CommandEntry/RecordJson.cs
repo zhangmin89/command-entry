@@ -1,16 +1,32 @@
 using System.Globalization;
 using System.Numerics;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Microsoft.Win32.SafeHandles;
 
 namespace CommandEntry;
 
 internal sealed class InvalidRequest(string reason) : Exception(reason);
 
-internal static class RecordJson
+internal static partial class RecordJson
 {
+    [StructLayout(LayoutKind.Sequential)]
+    private struct RenameInformation
+    {
+        internal uint Flags;
+        internal nint RootDirectory;
+        internal uint FileNameLength;
+        internal char FileName;
+    }
+
+    [LibraryImport("kernel32.dll", StringMarshalling = StringMarshalling.Utf16, SetLastError = true)]
+    private static partial SafeFileHandle CreateFileW(string path, uint access, uint sharing, nint security, uint disposition, uint flags, nint template);
+    [LibraryImport("kernel32.dll", SetLastError = true)]
+    private static partial int SetFileInformationByHandle(SafeFileHandle file, int informationClass, nint information, uint size);
+
     internal const string Version = "2.0.0-candidate.3-closeout.2";
     private static readonly Guid IdentityNamespace = new("a93e3e64-c90b-4ca6-a8da-bcf070c04196");
     internal static readonly UTF8Encoding Utf8 = new(false, true);
@@ -20,9 +36,13 @@ internal static class RecordJson
         if (!condition) throw new InvalidRequest(reason);
     }
 
-    internal static JsonObject Read(string path) =>
-        JsonNode.Parse(File.ReadAllText(path, Utf8))?.AsObject()
-        ?? throw new InvalidRequest("request_object_required");
+    internal static JsonObject Read(string path)
+    {
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete);
+        using var reader = new StreamReader(stream, Utf8, detectEncodingFromByteOrderMarks: true);
+        return JsonNode.Parse(reader.ReadToEnd())?.AsObject()
+            ?? throw new InvalidRequest("request_object_required");
+    }
 
     // Record identities must agree with Python's ensure_ascii=True canonical JSON.
     // Writing JsonNode directly avoids reflection and preserves AOT compatibility.
@@ -103,16 +123,54 @@ internal static class RecordJson
     internal static void Save(string path, JsonNode value)
     {
         string temporary = path + "." + Guid.NewGuid() + ".tmp";
-        WriteNew(temporary, value);
-        for (int attempt = 0; ; attempt++)
+        try
         {
-            try { File.Move(temporary, path, overwrite: true); return; }
-            catch (IOException error) when (attempt < 4 && (error.HResult & 0xffff) is 5 or 32)
-            { Thread.Sleep(20); }
-            catch (UnauthorizedAccessException) when (attempt < 4)
-            { Thread.Sleep(20); }
+            WriteNew(temporary, value);
+            for (int attempt = 0; ; attempt++)
+            {
+                try { ReplaceSnapshot(temporary, path); return; }
+                catch (IOException error) when (attempt < 4 && (error.HResult & 0xffff) is 5 or 32)
+                { Thread.Sleep(20); }
+                catch (UnauthorizedAccessException) when (attempt < 4)
+                { Thread.Sleep(20); }
+            }
+        }
+        finally
+        {
+            // Only this invocation's unpublished scratch file, never a record.
+            if (File.Exists(temporary)) File.Delete(temporary);
         }
     }
+
+    private static unsafe void ReplaceSnapshot(string temporary, string path)
+    {
+        // FileRenameInfoEx with REPLACE_IF_EXISTS | POSIX_SEMANTICS keeps existing
+        // share-delete readers on the old snapshot and new readers on the new one.
+        string target = ExtendedPath(path);
+        byte[] buffer = new byte[checked(sizeof(RenameInformation) + target.Length * sizeof(char))];
+        using var source = CreateFileW(ExtendedPath(temporary), 0x00010000, 7, 0, 3, 0x80, 0); // DELETE, share R/W/D, OPEN_EXISTING
+        if (source.IsInvalid) throw RenameError(Marshal.GetLastPInvokeError());
+        fixed (byte* data = buffer)
+        {
+            var information = (RenameInformation*)data;
+            information->Flags = 0x3;
+            information->FileNameLength = checked((uint)(target.Length * sizeof(char)));
+            target.AsSpan().CopyTo(new Span<char>(&information->FileName, target.Length));
+            if (SetFileInformationByHandle(source, 22, (nint)data, (uint)buffer.Length) == 0)
+                throw RenameError(Marshal.GetLastPInvokeError());
+        }
+    }
+
+    private static string ExtendedPath(string path)
+    {
+        path = Path.GetFullPath(path);
+        if (path.StartsWith(@"\\?\", StringComparison.Ordinal) || path.StartsWith(@"\\.\", StringComparison.Ordinal)) return path;
+        return path.StartsWith(@"\\", StringComparison.Ordinal) ? @"\\?\UNC\" + path[2..] : @"\\?\" + path;
+    }
+
+    private static IOException RenameError(int error) => new(
+        "Snapshot replacement failed (Win32 " + error.ToString(CultureInfo.InvariantCulture) + ").",
+        unchecked((int)(0x80070000u | (uint)error)));
 
     private static void Append(JsonNode? node, StringBuilder text)
     {

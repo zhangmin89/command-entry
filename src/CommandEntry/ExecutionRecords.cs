@@ -23,16 +23,23 @@ internal static class ExecutionRecords
         ["kind"] = ErrorKind(error), ["reason"] = OutputCapture.Slice(OutputCapture.RedactLine(error.Message), 0, 600)
     };
 
-    internal static JsonObject Snapshot(string directory)
+    internal static JsonObject Snapshot(string directory) => Snapshot(directory, WindowsProcess.Observe);
+
+    internal static JsonObject Snapshot(string directory, Func<int, JsonObject> observeOwner)
     {
         string file = Path.Combine(directory, "result.json");
         if (!File.Exists(file)) return new() { ["state"] = "unknown", ["reason"] = "claim_exists_without_readable_state", ["execution_id"] = Path.GetFileName(directory) };
         var state = Read(file);
         if (!Terminal.Contains(state["state"].String()) && state["owner"] is JsonObject owner)
         {
-            var current = WindowsProcess.Observe(owner.Int("pid", 0));
+            var current = observeOwner(owner.Int("pid", 0));
             if (owner["creation_time"] is null || !JsonNode.DeepEquals(current["creation_time"], owner["creation_time"]) || !current["alive"].IsTrue())
-            { state["state"] = "unknown"; state["reason"] = "owner_instance_not_confirmed"; }
+            {
+                // The owner can publish its final state between our read and observation.
+                var published = Read(file);
+                if (Terminal.Contains(published["state"].String())) return published;
+                state["state"] = "unknown"; state["reason"] = "owner_instance_not_confirmed";
+            }
             state["owner_observed_now"] = current;
         }
         return state;

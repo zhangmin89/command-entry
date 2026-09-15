@@ -8,9 +8,9 @@ internal sealed partial class ExecutionServer
 {
     private JsonObject Status(JsonObject form)
     {
-        form.Known(["execution_id", "cwd"]);
+        form.Known(["execution_id"]);
         string id = form["execution_id"].String("execution_id_required"), directory = Locate(id);
-        var failure = !File.Exists(Path.Combine(directory, "result.json")) ? StartupFailure(id) : null;
+        var failure = StartupFailureWithoutResult(id, directory);
         var state = ExecutionRecords.Snapshot(directory);
         if (failure is not null && !File.Exists(Path.Combine(directory, "result.json")))
             state = new() { ["state"] = "start_failed", ["serve_error"] = failure, ["subgoal"] = new JsonObject { ["status"] = "unknown" } };
@@ -19,7 +19,7 @@ internal sealed partial class ExecutionServer
 
     private JsonObject Output(JsonObject form)
     {
-        form.Known(["execution_id", "cwd", "stream", "offset", "count"]);
+        form.Known(["execution_id", "stream", "offset", "count"]);
         string id = form["execution_id"].String("execution_id_required"), directory = Locate(id);
         string stream = form.ContainsKey("stream") ? form["stream"].String("invalid_stream") : "stdout";
         Require(stream is "stdout" or "stderr", "invalid_stream");
@@ -52,13 +52,12 @@ internal sealed partial class ExecutionServer
 
     private async Task<JsonObject> Cancel(JsonObject form)
     {
-        form.Known(["execution_id", "cwd"]);
+        form.Known(["execution_id"]);
         string id = form["execution_id"].String("execution_id_required"), directory = Locate(id);
-        if (!Directory.Exists(directory))
-        {
-            Require(File.Exists(Path.Combine(serveRoot, id, "serve-error.json")), "record_missing_unconfirmed");
+        if (StartupFailureWithoutResult(id, directory) is not null)
             return new() { ["execution_id"] = id, ["state"] = "not_started", ["cancel_action"] = "already_terminal" };
-        }
+        Require(File.Exists(Path.Combine(directory, "result.json")),
+            "record_missing_unconfirmed: preserve the claim and request; manual recovery of the original evidence is required.");
         var state = ExecutionRecords.Snapshot(directory);
         if (ExecutionRecords.ConfirmedTerminal.Contains(state["state"].String()))
             return new() { ["execution_id"] = id, ["state"] = state["state"]?.Copy(), ["cancel_action"] = "already_terminal" };
@@ -87,8 +86,16 @@ internal sealed partial class ExecutionServer
 
     private async Task<JsonObject> Wait(JsonObject form)
     {
-        form.Known(["execution_id", "cwd"]);
+        form.Known(["execution_id"]);
         string id = form["execution_id"].String("execution_id_required"), directory = Locate(id);
+        if (!File.Exists(Path.Combine(directory, "result.json")))
+        {
+            var result = Status(form);
+            result["wait_outcome"] = result["state"].Text() == "start_failed" ? "terminal" : "unconfirmed";
+            if (result["wait_outcome"].Text() == "unconfirmed")
+                result["note"] = "Execution record is missing; manual recovery of the original evidence is required. Process liveness is unknown.";
+            return result;
+        }
         int budget = policy.Int("wait_budget_seconds", 30), interval = policy.Int("wait_poll_interval_seconds", 5), threshold = policy.Int("wait_stop_after_no_progress", 12);
         var elapsed = Stopwatch.StartNew();
         using var mutex = new FileMutex(Path.Combine(directory, "wait-state.lock"));

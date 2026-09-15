@@ -47,8 +47,9 @@ dotnet build tests/CommandEntry.Tests.csproj --configuration Release --verbosity
 dotnet tests/bin/Release/net10.0-windows/win-x64/CommandEntry.Tests.dll --root <repo-root> --server <repo-root>/src/CommandEntry/bin/Release/net10.0-windows/win-x64/CommandEntry.exe
 ~~~
 
-The dependency-free executable runner reports every test group, fails on the
-first failed assertion and returns a nonzero exit code. Building the project
+The dependency-free executable runner reports every test group, continues to
+the remaining groups after a failure, and returns a nonzero exit code if any
+group failed. Building the project
 does not execute its tests. Full script-contract tests also require the
 PowerShell, Node and Python interpreters configured in the template.
 
@@ -77,9 +78,22 @@ limits does not create another copy of running or unconfirmed work.
   previously bound files; newly added files alone do not qualify.
 - Queries use the existing execution ID. Confirmed terminal work can be
   started as a new intent. Unknown work remains blocked until cancellation
-  confirms all known process instances are dead.
+  confirms all known process instances are dead. Queries reject `cwd`; their
+  record location comes from the original request.
+- Missing historical evidence never proves termination. Missing `result.json`
+  requires manual recovery of the original evidence; `wait` returns
+  `unconfirmed` without creating evidence, even if its directory exists. A
+  validated startup-failure sidecar with no result instead reports
+  `start_failed`; cancellation reports `already_terminal` and a new intent
+  is allowed. An existing result always takes precedence. Claims whose request
+  is missing are preserved and rejected with `claim_publication_missing`.
+  A derived ID that already has a record is rejected with
+  `execution_identity_already_recorded`, preventing reuse after history loss.
 - Output is drained after its retention quota is exhausted. Only bounded,
   redacted text is retained. Paging offsets count Unicode code points.
+  Scheme-qualified URL userinfo, Bearer values and supported token formats
+  are redacted in output and errors even after non-ASCII prefixes. ASCII
+  identifier boundaries (letters, digits and underscore) remain respected.
 - `read_text` uses strict decoding and explicit coverage metadata.
   `total_lines` is unknown until scanning reaches EOF. Oversized requested
   lines produce errors; continuation uses `next_start_line`.
@@ -90,3 +104,8 @@ limits does not create another copy of running or unconfirmed work.
 The migration preserves the policy-level write fence, serial stdio behavior
 and host-dependent Job limitations described in
 [residual risks](docs/residual-risks.md).
+
+Windows environment names are merged case-insensitively before owner startup.
+For conflicting spellings, the ordinal-first spelling supplies the value,
+independent of enumeration order; the internal owner-input variable is always
+set by the launcher. Other inherited variables remain available to children.
