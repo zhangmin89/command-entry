@@ -40,7 +40,7 @@ revisit only if observation-week data shows real contention.
 
 binding.json pins absolute paths and hashes of one machine's file set. It is
 NOT source: every machine rebuilds it locally with
-`scripts/build_binding.py` after any code/policy change. It is excluded
+`CommandEntry.exe build-binding` after any code/policy change. It is excluded
 from git tracking (`git rm --cached` + .gitignore); the local file is kept,
 never synced between machines.
 

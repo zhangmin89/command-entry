@@ -55,7 +55,7 @@ internal sealed partial class ExecutionServer
             Require(locks.Bindings[file].Text() == item["sha256"].Text(), "runtime_changed_since_review_" + Path.GetFileName(file));
             verified.Add(file);
         }
-        string[] names = ["CommandEntry.exe", "invoke.ps1", "check_powershell.ps1", "check_python.py"];
+        string[] names = ["CommandEntry.exe"];
         if (typeof(ExecutionServer).Assembly.Location.Length > 0)
             names = [.. names, "CommandEntry.dll", "CommandEntry.deps.json", "CommandEntry.runtimeconfig.json"];
         foreach (string file in names.Select(name => Path.Combine(AppContext.BaseDirectory, name))

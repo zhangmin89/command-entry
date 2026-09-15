@@ -13,6 +13,7 @@ internal static class ExecutionRecords
         or Win32Exception or JsonException or ArgumentException or InvalidOperationException or FormatException or OverflowException or TimeoutException;
     internal static string ErrorKind(Exception error) => error switch
     {
+        FileNotFoundException or DirectoryNotFoundException or Win32Exception { NativeErrorCode: 2 or 3 } => "FileNotFoundError",
         InvalidRequest => "Invalid", JsonException or FormatException => "ValueError", IOException or Win32Exception or UnauthorizedAccessException => "OSError",
         _ => error.GetType().Name
     };

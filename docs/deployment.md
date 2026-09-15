@@ -1,140 +1,99 @@
-# Pure-beta deployment guide (stage 3)
+# C# deployment guide
 
-All server, policy, binding, log and record roots live **outside the model
-workspace**. The cage keys never enter the cage.
+Deployment is separate from source migration. The user installs the reviewed
+release, updates client registration and re-pins the policy. Keep the installed
+runtime and its policy outside the agent's writable working roots.
 
-## 1. Install layout (outside workspace)
+## Release layout
 
-```text
-<install-root>            e.g. C:\Users\<user>\.codex\command-entry
-├── server.py, common.py, entry_v2.py, worker_v2.py, windows_state.py,
-│   wait_state.py, adapter.py, output_store.py, v1_support.py,
-│   invoke.ps1, check_python.py, check_powershell.ps1
-├── hook_v2.py            deny-all sentinel (referenced by hooks.json below)
-├── policy.json           deployed policy (working_roots narrowed per stage 4)
-├── binding.json          integrity anchor (built by scripts/build_binding.py)
-├── serve-input\          serve_root: <execution_id>\{request.json, policy.json}
-├── hook-records\        sentinel decision envelopes (no command content)
-└── logs\                 server startup job-environment probe
-```
+~~~text
+<install-root>/
+  CommandEntry.exe
+  CommandEntry.pdb
+  policy.json
+  binding.json
+  serve-input/
+  hook-records/
+  logs/
+~~~
 
-## 2. Codex user configuration
+The executable contains the MCP server, owner/worker, sentinel and maintenance
+commands. It needs no Python interpreter or installed .NET runtime for those
+roles. A configured interpreter is required when executing work in that
+language. Fixed PowerShell adapters are embedded in the executable and covered
+by its binding. The runtime launches interpreters through `Process.Start`;
+it has no PowerShell SDK dependency.
 
-### MCP server registration (`~/.codex/config.toml`)
+## Prepare and switch
 
-```toml
-[mcp_servers.command_entry_exec_server]
-command = 'C:\Users\<user>\AppData\Local\Python\pythoncore-3.14-64\python.exe'
-args = ['-X', 'utf8', '<install-root>\server.py',
-        '--policy', '<install-root>\policy.json',
-        '--binding', '<install-root>\binding.json']
-```
+1. Build and test a fresh native release using
+   [the verification instructions](csharp-migration.md).
+2. Copy it to a separate reviewed release directory. Retain the old release.
+3. Preserve the installed policy's program mappings, roots, budgets and record
+   locations. The repository policy is a template with placeholder roots.
+4. Generate a binding in a new file with absolute paths:
 
-Both flags exist: `--policy` (required) loads the policy, `--binding`
-(optional) enables the startup self-check against the integrity anchor.
-Writing `--policy` twice makes argparse take the LAST value (binding.json)
-and the server exits with `policy_version_required` — this exact typo was
-observed in the field.
+~~~text
+CommandEntry.exe build-binding --runtime-root <install-root> --policy <policy-path> --output <new-binding-path>
+~~~
 
-Verify against the Codex version's config documentation before deploying;
-the exact table name and fields follow the official user configuration page.
+5. Register the MCP executable as `<install-root>/CommandEntry.exe` with
+   argument entries `--policy`, the reviewed policy path, `--binding`, and
+   the new binding path.
+6. Register the hook using the same executable's `sentinel` command:
 
-### Hook registration (`~/.codex/hooks.json`)
+~~~text
+CommandEntry.exe sentinel --records <hook-records-path>
+~~~
 
-```json
-{
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "^(Bash|shell|exec_command)$",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "C:\\Users\\<user>\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe -X utf8 <install-root>\\hook_v2.py --records <install-root>\\hook-records"
-          }
-        ]
-      }
-    ]
-  }
-}
-```
+   The command-based hook must quote absolute executable and record paths when
+   needed. Keep the existing `^(Bash|shell|exec_command)$` matcher.
+   `exec` remains outside that matcher because it is the MCP code-mode cell.
+7. Stop creating new work through the old server, restart/re-trust the changed
+   client registration, then verify tools/list, a harmless execution, and its
+   status/output. Verify a shell hook event produces a deny decision and an
+   envelope-only sentinel record.
+8. Keep `serve_root` and `record_root` aligned with the previous installation
+   when existing execution IDs must remain queryable.
 
-The matcher and `SHELL_TOOLS` in hook_v2.py must cover the actual tool
-names the host emits (observed: Bash, shell, exec_command). An
-uncovered name leaves the shell channel silently open: verify on day one by
-triggering one raw shell call and confirming a new sentinel record with
-`decision: "deny"` appears in hook-records. If the host introduces a new
-shell tool name, add it in BOTH places.
+The sentinel reads no policy or binding and never records command content.
+Its executable now shares the server binary covered by the runtime binding;
+the install location and hook-registration trust still protect the hook entry.
 
-**Never add `exec` to the deny set**: on Codex 0.154.0-alpha.x it is the
-code-mode JS cell AND the only channel for MCP tool calls — denying it
-self-locks the exec server. (Field evidence: 961 historical records, all
-tool_name=Bash; no `exec` event ever reached the hook.)
+## Policy maintenance
 
-**Diagnostic when zero records appear** (hook loaded? real tool names?):
-temporarily set the matcher to `".*"`, restart, and let the agent do any
-work. The sentinel records EVERY PreToolUse event it receives, including
-passthrough, with the true `tool_name` in the record. Records appearing →
-the hook is loaded; read the real tool names from the records and finalize
-the matcher from them. Still zero records → the hook is not loaded at all:
-check `/hooks` trust state and restart. Revert to the final matcher
-afterwards.
+Use the native commands:
 
-A new hook definition must be reviewed and trusted in Codex CLI `/hooks`;
-already-open desktop/IDE sessions must be restarted before verification.
-The sentinel denies every shell/exec_command call and points to the exec
-server tools. It reads no binding and never stores command content.
+~~~text
+CommandEntry.exe update-policy --repo-root <install-root> --policy <reviewed-candidate>
+CommandEntry.exe update-policy --repo-root <install-root> --add-program NAME --program-path PATH --kind native
+~~~
 
-Note: `hook_v2.py` is deliberately NOT in binding.json's runtime_files.
-Its integrity rests on two other layers — the install root sits outside
-every working_root (the model cannot write to it), and Codex forces
-re-trust on any hooks.json definition change. This is by design, not an
-omission.
+The updater validates the candidate before changes, archives the old policy
+and binding under `policy-backups`, commits the candidate, and re-pins it.
+A mid-flight failure restores the old pair. Passing the live policy as the
+candidate performs validation and re-pinning without changing its bytes.
 
-### Approval differentiation
+Create bindings with `CommandEntry.exe build-binding --runtime-root PATH
+--policy PATH --output NEW-PATH`. The former PowerShell maintenance wrappers
+have been removed; update automation to call the native subcommands. Python
+and PowerShell interpreters are not needed for maintenance.
 
-- MCP server `command_entry_exec_server`: pre-trust once per session startup.
-- Shell channel: set to untrusted (every call asks).
+The fixed publication-maintenance command defaults to preview and requires
+stopped C# runtime processes before applying. It refuses changed claims,
+occupied destinations, unexpected record contents and invalid bindings.
+Its three reviewed records are moved intact with a manifest; it is not a
+general record-cleanup command.
 
-The concrete config keys depend on the Codex version's approval model;
-apply them from the official config documentation at deploy time. The
-effect we require: server tool calls flow without per-call prompts, raw
-shell always prompts on top of the hook deny.
+## Rollback and retained evidence
 
-## 3. Same-day activation order (plan 0.5)
+Retain the old runtime, policy/binding pair and client registration before
+switching. A rollback restores that reviewed set and restarts the client.
+Do not mix an old binding with new executable bytes.
 
-read_roots was already implemented with the server (stage 2). On switch day:
+Keep execution records. An unknown execution remains unconfirmed even if its
+server disappeared; use its existing cancellation flow to confirm the known
+process instances are dead. Source migration does not reset those records.
 
-1. Decide `read_roots`: **`null` is an allowed state** — the server falls
-   back to `working_roots` (verified in the field: out-of-roots reads get a
-   structured `file_outside_read_roots` rejection). To ADD read-only
-   reference directories without duplicating the list, use the
-   `'@working_roots'` token, which expands in place:
-   `"read_roots": ["@working_roots", "C:\\Users\\<user>\\.agents\\skills"]`
-   means "everything workable, plus this reference dir" — the reference dir
-   stays unreadable as an operation cwd (no records are written there).
-2. Register the server + hook, trust the hook in `/hooks`.
-3. Enable pre-trust for the server; set shell to untrusted.
-4. Restart Codex; verify: raw shell -> deny + pointer; read outside
-   read_roots -> structured rejection.
-
-## 4. Rollback
-
-Replace the hook block in `~/.codex/hooks.json` with the retained V2
-checker (keep a copy of the previous block before switching), remove the
-MCP server entry, restore the previous AGENTS.md section, restart Codex.
-Execution records are plain directories; nothing else to undo.
-
-**Housekeeping rule**: any cleanup of the install root must FIRST archive
-`hooks.json` (e.g. `hooks.json.backup-v2-<date>` next to it). A field
-cleanup once deleted the only copy of the previous hook block; rollback
-then means hand-rewriting the block from the archived copy.
-
-## 5. Legacy routes after stage 3
-
-- `prepare_mcp.py` and the V2 launch grammar: retired; the checker route is
-  gone from the hook (deny-all sentinel).
-- `entry_v2.py` CLI (`run`/`location`/`serve`): kept as an operations debug
-  entry; it is not a model channel.
-- `v1_support.py` stays as the Job/syntax library used by entry_v2; its
-  V1 hook/canonical helpers have no callers and are inert.
+The accepted Job, network and write-fence limitations remain documented in
+[residual risks](residual-risks.md).

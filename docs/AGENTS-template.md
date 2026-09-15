@@ -64,7 +64,8 @@ operations events, not raw shell:
 
 1. The server returns a structured rejection naming the missing rule.
 2. Ask the user to evaluate it.
-3. If approved, the user runs `update-policy.ps1`, re-pins the binding and
-   restarts the server. Do not attempt to modify policy files yourself.
+3. If approved, the user runs the installed executable's `update-policy`
+   command to update and re-pin the binding, then restarts the server.
+   Do not attempt to modify policy files yourself.
 
 <!-- END COMMAND ENTRY PURE BETA -->

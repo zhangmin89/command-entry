@@ -4,7 +4,7 @@ using static CommandEntry.RecordJson;
 
 namespace CommandEntry;
 
-internal sealed record ExecutionPlan(string Executable, string[] Arguments, int Budget, int OutputQuota, JsonObject Syntax)
+internal sealed record ExecutionPlan(string Executable, string[] Arguments, int Budget, int OutputQuota, JsonObject Syntax, string? PowerShellRequest = null)
 {
     internal static async Task<ExecutionPlan> Create(JsonObject request, JsonObject policy, FileBindings locks, string directory)
     {
@@ -18,6 +18,7 @@ internal sealed record ExecutionPlan(string Executable, string[] Arguments, int 
         string executable = BusinessPaths.Resolve(program["path"].String(), "file");
         string[] arguments = request.ArrayOrEmpty("args").Select(v => v.String()).ToArray();
         JsonObject syntax = new() { ["status"] = "not_applicable" };
+        string? powerShellRequest = null;
         if (operation == "native")
         {
             Require(program["kind"].Text() == "native", "interpreter_requires_explicit_script_or_module_operation");
@@ -55,33 +56,32 @@ internal sealed record ExecutionPlan(string Executable, string[] Arguments, int 
                 }
                 string invokeFile = Path.Combine(directory, "powershell-invocation.json");
                 WriteNew(invokeFile, invocation); locks.Add(invokeFile);
-                arguments = ["-NoProfile", "-File", Path.Combine(AppContext.BaseDirectory, "invoke.ps1"), "-RequestPath", invokeFile];
+                powerShellRequest = invokeFile;
+                arguments = PowerShellAdapter.InvocationArguments();
             }
             else
             {
                 Require(!request.ContainsKey("parameters_file"), "parameters_file_only_for_powershell");
                 arguments = language == "python" ? ["-X", "utf8", script, .. arguments] : [script, .. arguments];
             }
-            syntax = await CheckSyntax(executable, language, script, request["cwd"].String());
-            Require(syntax["status"].Text() == "passed", "script_syntax_check_failed: " + syntax["stderr"]?["text"].Text());
+            if (language == "bash")
+            {
+                syntax = await CheckBashSyntax(executable, script, request["cwd"].String());
+                Require(syntax["status"].Text() == "passed", "script_syntax_check_failed: " + syntax["stderr"]?["text"].Text());
+            }
         }
         foreach (var pair in request.ObjectOrEmpty("expected_versions"))
         {
             string path = BusinessPaths.Resolve(pair.Key, "file"); locks.Add(path);
             Require(locks.Bindings[path].Text() == pair.Value.Text(), "declared_content_version_changed");
         }
-        return new(executable, arguments, options.Int("run_seconds", 0), options.Int("output_quota_bytes", 0), syntax);
+        return new(executable, arguments, options.Int("run_seconds", 0), options.Int("output_quota_bytes", 0), syntax, powerShellRequest);
     }
 
-    private static async Task<JsonObject> CheckSyntax(string executable, string language, string script, string cwd)
+    private static async Task<JsonObject> CheckBashSyntax(string executable, string script, string cwd)
     {
-        string[] arguments = language switch
-        {
-            "python" => ["-I", "-X", "utf8", Path.Combine(AppContext.BaseDirectory, "check_python.py"), script],
-            "powershell" => ["-NoProfile", "-File", Path.Combine(AppContext.BaseDirectory, "check_powershell.ps1"), "-ScriptPath", script],
-            "javascript" => ["--check", script], "bash" => ["-n", script], _ => throw new InvalidRequest("unsupported_language")
-        };
-        using var process = Process.Start(WindowsProcess.StartInfo(executable, arguments, cwd))!;
+        var info = WindowsProcess.StartInfo(executable, ["-n", script], cwd);
+        using var process = Process.Start(info)!;
         process.StandardInput.Close();
         var stdout = DrainSyntax(process.StandardOutput.BaseStream);
         var stderr = DrainSyntax(process.StandardError.BaseStream);

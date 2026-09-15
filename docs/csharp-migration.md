@@ -1,180 +1,145 @@
-# C# MCP server and Native AOT
+# C# migration and verification
 
-The six public MCP tools are implemented in `src/CommandEntry` using .NET 10
-and the official `ModelContextProtocol.Core` SDK, pinned to 2.2.0. The stdio
-transport and protocol handling use the SDK. The existing Python sources
-remain available as a behavioral reference and for the existing operational
-scripts and shell sentinel. This change does not switch the installed server.
+## Implementation
 
-## Build and verification
+The server, owner, worker, sentinel, policy maintenance and metrics are C#.
+Old Python implementations and unittest modules have been replaced. Tests
+execute the real MCP protocol and processes through a C# runner.
 
-Use the approved command-entry MCP tools to execute these operations from the
-repository root. `dotnet` is the native policy key; no shell command is needed.
+The native executable continues to launch configured interpreters with
+`Process.Start`; no PowerShell SDK is referenced by the runtime or tests.
+The PowerShell invocation adapter is a fixed C# string constant, executed by that
+interpreter via `-EncodedCommand`. User paths are separate environment data;
+structured parameters stay in bound JSON files. Full parameter-name checks
+and exit-code propagation are retained. Maintenance
+commands are called directly in C#. The old five `.ps1` entry files and their
+project Content entries have been removed.
 
-```text
-dotnet build src/CommandEntry/CommandEntry.csproj --configuration Release --verbosity minimal
-dotnet publish src/CommandEntry/CommandEntry.csproj --configuration Release --runtime win-x64 --output artifacts/command-entry-win-x64 --verbosity minimal
-```
+The `python_unittest` operation and Python script execution remain public
+capabilities. PowerShell, Node and Python use the configured interpreter for
+execution without a separate syntax-check process. Syntax failures retain the
+interpreter's stderr and nonzero exit code as an `exited` execution, rather
+than a pre-execution `rejected` result. Their `syntax.status` is
+`not_applicable`, indicating that no precheck applies; it does not mean syntax
+validation passed. Bash retains `-n` and rejects failed prechecks before
+starting the business process. Request, path, file-binding, parameter and retry
+validation remain unchanged.
 
-Publishing requires the Windows C++ build tools and Windows SDK in addition
-to the .NET SDK. The execution environment must preserve the Windows `OS`
-and `PROCESSOR_ARCHITECTURE` variables. Missing `OS=Windows_NT` caused Native
-AOT's cross-OS check to reject this Windows-to-Windows publish; the source
-does not override these variables or suppress the check.
+## Regression coverage
 
-Run `scripts/test-native-aot.py` with the Python script operation. It checks
-the PE architecture, absence of a managed CLR header and managed application
-companions, and presence of the required script helpers. It then runs the
-MCP contract suite against the published executable. The same suite runs
-against the managed build through the Python unittest operation:
-
-```text
-python -m unittest tests.test_csharp_migration -v -f
-```
-
-The suite covers argument boundaries, binary stdin, no-console execution,
-Python-compatible request identities, redaction and output quotas, Unicode
-paging, strict UTF-8/GBK/UTF-16 range reads, syntax and batch rejection,
-deduplication across server instances, claim recovery, retry bindings,
-acceptance checks, cancellation, abandoned executions, wait accounting,
-server exit survival, and policy/runtime integrity rejection.
-
-Test records are retained under `.codex-command-records/csharp-test-*`.
-
-For deterministic numeric parity and cleanup fault injection, build the
-existing conditional harness into a separate output directory:
-
-```text
-dotnet build src/CommandEntry/CommandEntry.csproj --configuration Release -p:DefineConstants=CONFORMANCE --output artifacts/command-entry-conformance --verbosity minimal
-dotnet artifacts/command-entry-conformance/CommandEntry.dll conformance
-```
-
-Run these from this repository root. The harness uses its configured Python
-interpreter, a fixed random seed, and retained cleanup records. Publish without
-`CONFORMANCE` for deployment. The harness also checks final-write failures,
-combined cleanup/write failures, and streams that return short reads.
-`scripts/check-read-text-parity.py` records both implementations' CR/LF,
-decoding and block-boundary results for diagnosis. It defaults to the AOT
-publish; `COMMAND_ENTRY_TEST_EXE` can select another executable without changing
-the test module's global settings. Missing executables are rejected before
-creating a diagnostic directory.
-
-## Runtime layout
-
-| File | Purpose |
+| Replaced Python area | C# coverage |
 | --- | --- |
-| `CommandEntry.exe` | Native MCP server, detached owner and worker modes |
-| `invoke.ps1` | Existing PowerShell parameter binding implementation |
-| `check_powershell.ps1` | Existing PowerShell syntax check |
-| `check_python.py` | Existing Python syntax check for requested Python work |
-| `CommandEntry.pdb` | Native symbols; keep with release artifacts for diagnosis |
+| V2 regression, stdin, execution options, no-window probes | ContractTests, ScriptTests |
+| MCP server, publication, claims, cancellation, waiting | LifecycleTests |
+| Policy validation, binding, updates, metrics, sentinel | MaintenanceTests |
+| Publication maintenance preview, blockers, backup, quarantine | PublicationMaintenanceTests |
+| Numeric and text parity | ContractTests + Fixtures/reference.json |
+| C# conformance cleanup/write failures and short reads | CleanupTests |
+| Interpreter subprocess arguments, binary stdin, cwd, streams and exit codes | ScriptTests.ExternalInterpretersPreserveProcessContract |
+| Embedded PowerShell diagnostics and special-character paths | ScriptTests.EmbeddedPowerShellErrorsRemainTextAndInvalidSourceDoesNotExecute |
+| Syntax errors from actual interpreter execution | ScriptTests.RuntimeSyntaxErrorsAreRetainedAndBatchNeverRuns |
+| Interpreter startup during planning applies only to Bash | ScriptTests.OnlyBashPlanningStartsAnInterpreter |
+| Native artifact validation | RuntimeCommands.InspectAot + the full executable suite |
 
-The server, owner and worker need neither a Python interpreter nor an
-installed .NET runtime. Executing Python work still requires the configured
-Python interpreter; PowerShell and JavaScript work similarly use their
-configured interpreters. Development contract tests use Python. The existing
-Python sentinel and policy maintenance scripts remain separate components.
+The fixed reference JSON was exported from the original implementation before
+its removal: 281 finite double values (seed 20260915), five prepared requests,
+45 text-read cases and redaction examples. Tests use these independent expected
+values directly; they do not execute a reference implementation.
 
-## Execution and integrity contracts
+The suite retains execution evidence under
+`.codex-command-records/csharp-test-*`. Synthetic records used for maintenance
+tests are also confined to those test directories.
 
-- Business and syntax-check processes use `ProcessStartInfo`,
-  `UseShellExecute=false`, `ArgumentList`, `CreateNoWindow=true`, and an
-  explicit working directory. No `Arguments` string is constructed.
-- The detached owner requires native creation flags that `ProcessStartInfo`
-  does not expose. A small `LibraryImport` boundary calls `CreateProcessW`
-  for the fixed `CommandEntry.exe` only. Its input-directory reference is
-  passed in a child-only environment block and removed before starting the
-  worker. Business arguments never cross this native launcher boundary.
-- The owner holds the kill-on-close Job. The worker receives permission to
-  start its business process only after Job assignment. Process cancellation
-  identifies instances by PID and creation time, and confirms their death.
-- File bindings deny concurrent writes/deletes while an execution uses its
-  inputs. Request identifiers and persisted envelopes retain the existing
-  format. Atomic claims and publication preserve the duplicate-start rules.
-- Output continues draining after retention is exhausted. Only bounded,
-  redacted text is persisted. Output offsets count Unicode code points.
-- `read_text` preserves the Python CR lookahead and loaded-block diagnostic
-  behavior: a fault before the CR line is completed rejects the range; a fault
-  later in an already-loaded block is reported as `decode_warning` after a
-  complete range. It does not scan subsequent blocks just to find warnings.
-  Each block is filled across short reads until its size limit or EOF.
-- MCP error messages are redacted, so credential-shaped diagnostic text can
-  be replaced. This is intentional. A corrupt `wait-state.json` remains a
-  structured failure requiring operator investigation; it is never deleted
-  or silently reset. Cleanup errors preserve the primary error in the record
-  and do not turn an unconfirmed process exit into a successful exit.
-- Final persistence runs outside the business-error handler, so a write fault
-  does not relabel a completed execution as `tool_error`. A failed write still
-  leaves the last durable snapshot; it does not prove the terminal state was
-  saved. If cleanup and persistence both fail, `execution_state_persistence_failed`
-  carries bounded, redacted `primary_error`, `cleanup_error` and
-  `persistence_error` details. An otherwise unhandled cleanup exception is
-  rethrown after successful persistence; it is not silently treated as handled.
-- Existing path, program, syntax, retry and acceptance checks remain in the
-  execution path. Policy checks are not replaced by the SDK or process API.
-- Agent Governance Toolkit and SecureString are not introduced. The SDK and
-  AOT are not treated as substitutes for policy, redaction or process control.
+The former `.smoke` checks are covered by the C# runner:
 
-## Reviewed deployment
+| Former smoke check | C# assertion coverage |
+| --- | --- |
+| Initialize, server identity, tool list, text read, PowerShell start/output/status/wait | SmokeTests.EndToEndSessionClosesCleanly |
+| Repeat the same request after completion | SmokeTests.EndToEndSessionClosesCleanly: new execution ID and successful output |
+| Deduplicate a request while still running | ContractTests.TimeoutAndDuplicateOptionsKeepOneExecution |
+| Reject an unknown start field before creating execution records | SmokeTests.UnknownStartFieldIsRejectedBeforePublication |
+| Query an absent execution ID, then continue using the session | SmokeTests.MissingExecutionStatusIsRejectedAndSessionRemainsUsable |
+| Close stdin, exit normally, and retain server events | SmokeTests.EndToEndSessionClosesCleanly |
 
-Deployment and changes to installed configuration remain user operations.
-Use a separate release directory and stop creating work through the old
-server before switching. Retain existing execution records and the sentinel.
-The old `scripts/build_binding.py` targets Python runtime files and must not
-be used to build a C# binding. Use the updated maintenance workflow below.
+These tests assert outcomes that the old scripts only printed. The clean-exit
+assertion runs before fixture disposal; forced teardown cannot make it pass.
+The runner does not read or execute `.smoke` files. Historical inputs, request
+records and logs in that directory remain preserved.
 
-1. Copy the published runtime files into the intended release directory.
-2. Keep the reviewed installed policy's program mappings, roots, limits and
-   record locations. Do not replace it with the repository template.
-3. Run `scripts/build-dotnet-binding.ps1` using the PowerShell script
-   operation and a JSON parameters file with absolute string values for
-   `RuntimeRoot`, `PolicyPath`, and a **new** `OutputPath`. It hashes the native
-   executable and three script helpers while holding read-only handles, then
-   creates and validates a schema-version-2 binding. It refuses overwrite.
-   Startup requires the current process executable, the owner/worker executable
-   and every helper to be present in the verified set. Paths are resolved and
-   compared using Windows case-insensitive semantics; another directory's
-   identical files cannot stand in for the running files. Managed development
-   apphost bindings additionally cover `CommandEntry.dll`, `.deps.json` and
-   `.runtimeconfig.json`; the builder includes these when the DLL is present.
-4. Point the MCP client command at the release's `CommandEntry.exe`, with
-   argument-list entries `--policy`, the reviewed policy path, `--binding`,
-   and the new binding path. Restart the server and verify tools/list plus
-   a harmless execution and its status/output before using normal workloads.
+Two equivalence defects exposed during migration were repaired:
 
-Keep `serve_root` and `record_root` aligned with the existing installation
-when previous execution IDs must remain queryable. Never remove an unknown
-execution merely to permit a restart; use cancellation to confirm all known
-process instances are dead.
+- Plain large-double output is converted to scientific notation by moving
+  existing round-trip digits, avoiding rounding by a second numeric format.
+- Missing file/path exceptions retain the `FileNotFoundError` classification.
 
-For later policy updates, install the updated `update-policy.ps1`,
-`scripts/build-dotnet-binding.ps1` and the existing `scripts/validate_policy.py`
-alongside the release. Policy maintenance still uses the configured Python
-interpreter and the unchanged policy validation rules. Invoke the update script
-only with the configured maintenance interpreter and validator present; missing
-dependencies are reported before candidate preparation or live changes. Invoke it
-through the approved PowerShell script operation with a JSON parameters file.
-`RepoRoot` is the release root; `PolicyPath` is the reviewed candidate policy,
-or use the existing `AddProgram` parameters for an approved program change.
+Canonical fingerprints involving affected large doubles can consequently
+differ from earlier faulty C# output. Existing execution records are not
+rewritten by this source migration.
 
-When `CommandEntry.exe` exists, the updater uses the .NET binding builder even
-if old Python files are also present. It validates the candidate first, backs
-up the old policy/binding pair, commits the policy, creates a new candidate
-binding with the final policy path, and replaces the binding only after the
-builder succeeds. A failure restores the old pair; diagnostic candidate files
-are retained. The two files are not an atomic multi-file transaction: stop
-starting work during maintenance, and restart the server after a successful
-update. Python-only installations retain their existing update path.
+## Build and run the managed suite
 
-## Validation limits
+Requirements: Windows x64, .NET SDK 10, and the configured interpreters for
+the user-script tests. Use the command-entry MCP tools with policy key
+`dotnet`; bind relevant inputs on the first execution when lineage retries
+will be needed.
 
-The black-box checks exercise the C# MCP routes. They do not port every
-Python unit test's internal monkey-patching surface. Legacy Python debug
-queries and maintenance scripts are still available through their original
-entry points; this release's `run` CLI is for prepared execution requests.
+~~~text
+dotnet build tests/CommandEntry.Tests.csproj --configuration Release --verbosity minimal
+dotnet tests/bin/Release/net10.0-windows/win-x64/CommandEntry.Tests.dll --root <repo-root> --server <repo-root>/src/CommandEntry/bin/Release/net10.0-windows/win-x64/CommandEntry.exe
+~~~
 
-Job breakaway availability is still a property of the host environment. A
-server-process crash can be survived while termination of a containing host
-Job can still terminate the owner. `orphan_guaranteed` continues to report
-that distinction, and `require_orphan_guarantee` continues to reject starts
-when the configured guarantee is unavailable.
+The runner executes test groups sequentially, reports failures with their
+exceptions, and exits 1 at the first failure. Its `RESULT` line reports passed,
+failed and remaining groups. It has no external test SDK or adapter.
+
+## Native AOT
+
+Publishing additionally requires Windows C++ build tools and the Windows SDK.
+Preserve the normal Windows `OS` and `PROCESSOR_ARCHITECTURE` environment
+variables; do not suppress the native toolchain's checks.
+
+Publish into a new directory so old managed files cannot be mistaken for
+part of a fresh native artifact.
+
+~~~text
+dotnet publish src/CommandEntry/CommandEntry.csproj --configuration Release --runtime win-x64 --output artifacts/command-entry-process-win-x64 --verbosity minimal
+dotnet tests/bin/Release/net10.0-windows/win-x64/CommandEntry.Tests.dll --root <repo-root> --server <repo-root>/artifacts/command-entry-process-win-x64/CommandEntry.exe --aot true
+~~~
+
+The `--aot true` run checks the PE architecture, PE32+ header, absence of a
+managed CLR header and managed application companions before running the same
+MCP and maintenance suite.
+
+The native executable can also inspect an artifact directly:
+
+~~~text
+CommandEntry.exe inspect-aot --executable <absolute-published-executable>
+~~~
+
+## Commands and published layout
+
+| Command | Purpose |
+| --- | --- |
+| --policy PATH --binding PATH | stdio MCP server with startup integrity check |
+| sentinel --records PATH | read one hook event from stdin and return its decision |
+| validate-policy --policy PATH | validate the policy structure |
+| build-binding --runtime-root PATH --policy PATH --output PATH | create a new binding; refuses overwrite |
+| update-policy --repo-root PATH [--policy PATH] | validate, back up the old pair, commit and re-pin |
+| update-policy --repo-root PATH --add-program NAME --program-path PATH --kind KIND | reviewed program addition |
+| metrics --records PATH --events PATH --serve PATH | envelope-only metrics |
+| publication-maintenance --install-root PATH --source-root PATH [--apply true] | preview/apply the fixed reviewed maintenance operation |
+| location | actual cwd and root/home exclusions |
+
+The native runtime consists of `CommandEntry.exe`; keep `CommandEntry.pdb`
+for diagnosis. There are no published PowerShell adapter or maintenance files.
+Bindings cover the executable, including its embedded adapter constants. Managed development
+bindings additionally cover the application DLL, deps and runtimeconfig files.
+Binding generation holds read handles through hashing and writing; it checks
+the written artifact and refuses to overwrite an existing output file.
+
+Policy updates validate before changing the target pair, archive both old
+files, and restore them after a commit/re-pin failure. Maintenance uses C#
+without launching Python. The old policy schema and validation rules remain.
+
+Deployment and changes to installed configuration are user operations.
+Follow [deployment](deployment.md); preserve existing policies and records.

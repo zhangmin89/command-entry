@@ -14,6 +14,7 @@ internal static class ExecutionOwner
         string[] argv = message["argv"].Array().Select(a => a.String()).ToArray();
         Require(argv.Length > 0, "worker_argv_required");
         var info = WindowsProcess.StartInfo(argv[0], argv.Skip(1), message["cwd"].String());
+        if (message["powershell_request"] is { } invocation) info.Environment[PowerShellAdapter.RequestVariable] = invocation.String();
         info.RedirectStandardOutput = false; info.RedirectStandardError = false;
         using var input = message["stdin_file"] is null ? null : File.OpenRead(message["stdin_file"].String());
         using var child = Process.Start(info)!;
@@ -95,7 +96,7 @@ internal static class ExecutionOwner
             ["started_at_unix"] = WindowsProcess.UnixNow, ["last_observed_unix"] = WindowsProcess.UnixNow
         };
         var sources = new JsonObject();
-        foreach (string file in Directory.EnumerateFiles(AppContext.BaseDirectory).Where(f => Path.GetExtension(f) is ".exe" or ".dll" or ".ps1" or ".py"))
+        foreach (string file in Directory.EnumerateFiles(AppContext.BaseDirectory).Where(f => Path.GetExtension(f) is ".exe" or ".dll"))
             sources[Path.GetFileName(file)] = FileHash(file);
         result["source_fingerprint"] = Digest(sources);
         var inputs = new JsonObject();
@@ -179,7 +180,7 @@ internal static class ExecutionOwner
             }
             result["state"] = "running"; result["worker"] = WindowsProcess.Observe(host.Id); Persist();
             var message = new JsonObject { ["handshake"] = "job_assigned", ["argv"] = result["argv"]?.Copy(), ["cwd"] = cwd,
-                ["record_dir"] = directory, ["stdin_file"] = request["stdin_file"]?.Copy() };
+                ["record_dir"] = directory, ["stdin_file"] = request["stdin_file"]?.Copy(), ["powershell_request"] = plan.PowerShellRequest };
             await host.StandardInput.BaseStream.WriteAsync(Packed(message)); await host.StandardInput.BaseStream.WriteAsync(new byte[] { 10 });
             host.StandardInput.Close(); timer = TimeoutAfter(plan.Budget); monitor = Monitor();
             await host.WaitForExitAsync(); finished.Cancel(); job.Dispose();

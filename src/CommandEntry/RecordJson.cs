@@ -172,7 +172,15 @@ internal static class RecordJson
                 + Math.Abs(exponent).ToString("D2", CultureInfo.InvariantCulture);
         }
         if (Math.Abs(number) >= 1e16)
-            return number.ToString("0.################e+00", CultureInfo.InvariantCulture);
+        {
+            // Reformat the round-trip digits without a second numeric conversion:
+            // custom numeric formats can round away significant double digits.
+            string sign = shortest.StartsWith('-') ? "-" : "";
+            string digits = shortest[sign.Length..];
+            string significant = digits.TrimEnd('0');
+            return sign + significant[..1] + (significant.Length > 1 ? "." + significant[1..] : "")
+                + "e+" + (digits.Length - 1).ToString("D2", CultureInfo.InvariantCulture);
+        }
         return shortest.Contains('.') ? shortest : shortest + ".0";
     }
 

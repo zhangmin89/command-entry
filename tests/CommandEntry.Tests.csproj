@@ -6,13 +6,11 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <IsAotCompatible>true</IsAotCompatible>
-    <JsonSerializerIsReflectionEnabledByDefault>false</JsonSerializerIsReflectionEnabledByDefault>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
-    <PublishAot>true</PublishAot>
+    <PublishAot>false</PublishAot>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="ModelContextProtocol.Core" Version="2.2.0" />
-    <InternalsVisibleTo Include="CommandEntry.Tests" />
+    <ProjectReference Include="../src/CommandEntry/CommandEntry.csproj" />
+    <Content Include="Fixtures/reference.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>
