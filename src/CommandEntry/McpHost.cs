@@ -58,13 +58,13 @@ internal static class McpHost
         start["output_quota_bytes"] = new JsonObject { ["type"] = "integer", ["minimum"] = 1024, ["maximum"] = 16777216 };
         var result = new List<Tool>
         {
-            Tool("start_operation", "Start one business operation via a detached entry child. Optional run_seconds (integer 1..1800) and output_quota_bytes (integer 1024..16777216 per stream) override policy defaults. Resource changes never start a second copy of running business; query the existing id for its unchanged limits. Records stay at the configured workspace location.", start, ["operation", "program", "workdir"])
+            Tool("start_operation", "Start one business operation via a detached entry child. Optional run_seconds (integer 1..1800) and output_quota_bytes (integer 1024..16777216 per stream) override policy defaults. The deployment template defaults are 300 seconds and 1048576 bytes. Omit to use the installed policy. Resource changes never start a second copy of running business; query the existing id for its unchanged limits. Records stay at the configured workspace location.", start, ["operation", "program", "workdir"])
         };
         foreach (var (name, description) in new[]
         {
             ("status", "Read the current envelope of one execution from its record directory."),
-            ("cancel", "Layered cancel: graceful state machine first, hard kill of exact process instances after the grace window."),
-            ("wait", "Blocking observation with a policy budget. Consecutive observations without progress stop automatic waiting; stopping is not confirmation of termination.")
+            ("cancel", "Layered cancel: cancel-request.json first (graceful V2 state machine), hard kill of exact process instances after cancel_grace_seconds."),
+            ("wait", "Blocking observation loop over the record directory, bounded by policy wait_budget_seconds. Consecutive observations without progress stop automatic waiting once the policy threshold wait_stop_after_no_progress (default 12) is reached. Stopping is not confirmation of termination.")
         }) result.Add(Tool(name, description, new() { ["execution_id"] = String() }, ["execution_id"]));
         result.Add(Tool("output", "Paged retrieval of retained redacted output text (offset/count are Unicode characters).",
             new() { ["execution_id"] = String(), ["stream"] = String(), ["offset"] = new JsonObject { ["type"] = "number" }, ["count"] = new JsonObject { ["type"] = "number" } }, ["execution_id"]));

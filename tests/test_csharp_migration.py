@@ -8,6 +8,7 @@ import hashlib
 import os
 from pathlib import Path
 import queue
+import shutil
 import subprocess
 import sys
 import threading
@@ -25,8 +26,8 @@ EXE = Path(os.environ.get('COMMAND_ENTRY_TEST_EXE', str(
 
 
 class Client:
-    def __init__(self, policy, binding=None):
-        arguments = [str(EXE), '--policy', str(policy)]
+    def __init__(self, policy, binding=None, executable=None):
+        arguments = [str(executable or EXE), '--policy', str(policy)]
         if binding is not None:
             arguments.extend(['--binding', str(binding)])
         self.process = subprocess.Popen(
@@ -113,6 +114,25 @@ class CSharpMigrationTests(unittest.TestCase):
         path.write_text(code, encoding='utf-8')
         return path
 
+    def runtime_names(self):
+        names = ['CommandEntry.exe', 'invoke.ps1', 'check_powershell.ps1', 'check_python.py']
+        if (EXE.parent / 'CommandEntry.dll').is_file():
+            names += ['CommandEntry.dll', 'CommandEntry.deps.json', 'CommandEntry.runtimeconfig.json']
+        return names
+
+    def anchor(self):
+        return {'schema_version': 2,
+            'policy': {'path': str(self.policy_file), 'sha256': hashlib.sha256(self.policy_file.read_bytes()).hexdigest()},
+            'runtime_files': [{'path': str(EXE.parent / name),
+                'sha256': hashlib.sha256((EXE.parent / name).read_bytes()).hexdigest()} for name in self.runtime_names()]}
+
+    def powershell(self, script, **parameters):
+        arguments = [self.policy['powershell'], '-NoProfile', '-File', str(script)]
+        for name, value in parameters.items():
+            arguments.extend(['-' + name, str(value)])
+        return subprocess.run(arguments, cwd=ROOT, stdin=subprocess.DEVNULL, capture_output=True,
+            shell=False, creationflags=subprocess.CREATE_NO_WINDOW, timeout=60)
+
     def start(self, script, **options):
         return self.client.call('start_operation', operation='script', program='python',
                                 language='python', script=str(script),
@@ -136,6 +156,10 @@ class CSharpMigrationTests(unittest.TestCase):
     def test_tool_schema_and_invalid_budget(self):
         tools = self.client.rpc('tools/list', {})['tools']
         self.assertEqual({t['name'] for t in tools}, {'start_operation', 'status', 'output', 'cancel', 'wait', 'read_text'})
+        descriptions = {t['name']: t['description'] for t in tools}
+        self.assertIn('300 seconds and 1048576 bytes', descriptions['start_operation'])
+        self.assertIn('wait_stop_after_no_progress (default 12)', descriptions['wait'])
+        self.assertIn('cancel_grace_seconds', descriptions['cancel'])
         for invalid in (True, None, 0, 1801, '30', 1.5):
             with self.subTest(invalid=invalid):
                 result = self.client.rpc('tools/call', {'name': 'start_operation', 'arguments': {
@@ -198,7 +222,14 @@ class CSharpMigrationTests(unittest.TestCase):
         cases = [('utf8.txt', '甲😀\r\n乙\v丙\u2028last'.encode(), None),
                  ('gbk.txt', '中文\r\n第二行'.encode('gbk'), 'gbk'),
                  ('be.txt', b'\xfe\xff' + ('甲\n' * 22000 + '末').encode('utf-16-be'), None),
-                 ('bad.txt', b'good\n\xffbad', None)]
+                 ('bad.txt', b'good\n\xffbad', None),
+                 ('cr-bad.txt', b'good\r\xff', 'utf-8'),
+                 ('crlf-bad.txt', b'good\r\n\xff', 'utf-8'),
+                 ('inside-bad.txt', b'go\xffod\n', 'utf-8'),
+                 ('cr-valid.txt', b'good\rnext', 'utf-8'),
+                 ('cr-eof.txt', b'good\r', 'utf-8'),
+                 ('next-chunk-bad.txt', b'good\n' + b'x' * 65531 + b'\xff', 'utf-8'),
+                 ('split-character.txt', b'good\n' + b'x' * 65530 + '中'.encode(), 'utf-8')]
         keys = ('text', 'lines_served', 'total_lines', 'total_lines_known', 'remaining', 'next_start_line', 'encoding_used')
         for name, data, encoding in cases:
             path = self.directory / name
@@ -214,6 +245,7 @@ class CSharpMigrationTests(unittest.TestCase):
                         self.assertEqual(actual.get('error'), expected['error'])
                     else:
                         self.assertEqual({k: actual[k] for k in keys}, {k: expected[k] for k in keys})
+                        self.assertEqual('decode_warning' in actual, 'decode_warning' in expected)
 
     def test_timeout_and_duplicate_delivery(self):
         script = self.script('sleep.py', 'import time\ntime.sleep(10)\n')
@@ -240,6 +272,9 @@ class CSharpMigrationTests(unittest.TestCase):
         self.assertEqual(state['state'], 'exited', state)
         self.assertIn(str(script), state['changed_conditions'])
         self.assertEqual(self.client.call('output', execution_id=changed['execution_id'])['text'], 'second\n')
+        events = [json.loads(line) for line in (self.directory / 'logs/server-events.jsonl').read_text().splitlines()]
+        starts = [event for event in events if event['kind'] == 'start_operation']
+        self.assertEqual([(e['dedup'], e['retry']) for e in starts], [(False, False), (False, True), (False, True)])
 
     def test_cancel_confirms_worker_and_business_exit(self):
         script = self.script('cancel.py', 'import time\ntime.sleep(40)\n')
@@ -357,9 +392,9 @@ class CSharpMigrationTests(unittest.TestCase):
         self.assertTrue(result['isError'])
         self.assertIn('policy_changed_since_review', result['content'][0]['text'])
         binding = self.directory / 'binding.json'
-        binding.write_text(json.dumps({'schema_version': 2,
-            'policy': {'path': str(self.policy_file), 'sha256': hashlib.sha256(self.policy_file.read_bytes()).hexdigest()},
-            'runtime_files': [{'path': str(EXE), 'sha256': '0' * 64}]}), encoding='utf-8')
+        anchor = self.anchor()
+        anchor['runtime_files'][0]['sha256'] = '0' * 64
+        binding.write_text(json.dumps(anchor), encoding='utf-8')
         failed = subprocess.run([str(EXE), '--policy', str(self.policy_file), '--binding', str(binding)],
             cwd=ROOT, stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding='utf-8',
             shell=False, creationflags=subprocess.CREATE_NO_WINDOW, timeout=20)
@@ -374,11 +409,10 @@ class CSharpMigrationTests(unittest.TestCase):
         result = subprocess.run(arguments, cwd=ROOT, stdin=subprocess.DEVNULL, capture_output=True,
             shell=False, creationflags=subprocess.CREATE_NO_WINDOW, timeout=30)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(json.loads(result.stdout)['files'], 4)
+        self.assertEqual(json.loads(result.stdout)['files'], len(self.runtime_names()))
         pinned = binding.read_bytes()
         anchor = json.loads(pinned)
-        self.assertEqual({Path(item['path']).name for item in anchor['runtime_files']},
-                         {'CommandEntry.exe', 'invoke.ps1', 'check_powershell.ps1', 'check_python.py'})
+        self.assertEqual({Path(item['path']).name for item in anchor['runtime_files']}, set(self.runtime_names()))
         bound = Client(self.policy_file, binding)
         self.addCleanup(bound.close)
         self.assertEqual(len(bound.rpc('tools/list', {})['tools']), 6)
@@ -387,6 +421,104 @@ class CSharpMigrationTests(unittest.TestCase):
         self.assertNotEqual(again.returncode, 0)
         self.assertIn(b'Refusing to overwrite an existing binding:', again.stderr)
         self.assertEqual(binding.read_bytes(), pinned)
+
+    def test_binding_requires_current_runtime_and_all_helpers(self):
+        original = self.anchor()
+        alternatives = [('empty', [])]
+        for index, item in enumerate(original['runtime_files']):
+            alternatives.append(('missing-' + Path(item['path']).name,
+                original['runtime_files'][:index] + original['runtime_files'][index + 1:]))
+        foreign = self.directory / 'foreign-runtime'
+        foreign.mkdir()
+        foreign_items = []
+        for item in original['runtime_files']:
+            copy = foreign / Path(item['path']).name
+            shutil.copyfile(item['path'], copy)
+            foreign_items.append(dict(item, path=str(copy)))
+        alternatives.append(('foreign', foreign_items))
+        alternatives.append(('duplicate-exe', [original['runtime_files'][0]] * len(self.runtime_names())))
+        legacy = ROOT / 'server.py'
+        alternatives.append(('python', [{'path': str(legacy), 'sha256': hashlib.sha256(legacy.read_bytes()).hexdigest()}]))
+        for name, items in alternatives:
+            with self.subTest(name=name):
+                binding = self.directory / (name + '-binding.json')
+                binding.write_text(json.dumps(dict(original, runtime_files=items)), encoding='utf-8')
+                failed = subprocess.run([str(EXE), '--policy', str(self.policy_file), '--binding', str(binding)],
+                    cwd=ROOT, stdin=subprocess.DEVNULL, capture_output=True, shell=False,
+                    creationflags=subprocess.CREATE_NO_WINDOW, timeout=20)
+                self.assertEqual(failed.returncode, 125, failed.stderr)
+                self.assertIn(b'runtime_binding_missing_', failed.stderr)
+        binding = self.directory / 'alias-binding.json'
+        for item in original['runtime_files']:
+            path = Path(item['path'])
+            item['path'] = str(path.parent).upper() + '\\.\\' + path.name.upper()
+        binding.write_text(json.dumps(original), encoding='utf-8')
+        bound = Client(self.policy_file, binding)
+        self.addCleanup(bound.close)
+        self.assertEqual(len(bound.rpc('tools/list', {})['tools']), 6)
+
+    def test_worker_rejects_missing_and_empty_argv(self):
+        for fields, reason in (({}, 'array_required'), ({'argv': []}, 'worker_argv_required')):
+            with self.subTest(fields=fields):
+                result = subprocess.run([str(EXE), 'worker'], cwd=ROOT,
+                    input=(json.dumps(dict(fields, handshake='job_assigned')) + '\n').encode(),
+                    capture_output=True, shell=False, creationflags=subprocess.CREATE_NO_WINDOW, timeout=20)
+                self.assertEqual(result.returncode, 125)
+                detail = json.loads(result.stderr)
+                self.assertEqual(detail['kind'], 'Invalid')
+                self.assertEqual(detail['reason'], reason)
+
+    def test_dotnet_policy_update_repins_and_rolls_back_pair(self):
+        repo = self.directory / 'dotnet-release'
+        repo.mkdir()
+        for name in self.runtime_names():
+            shutil.copyfile(EXE.parent / name, repo / name)
+        for dependency in EXE.parent.glob('*.dll'):
+            if dependency.name != 'CommandEntry.dll':
+                shutil.copyfile(dependency, repo / dependency.name)
+        (repo / 'scripts').mkdir()
+        for name in ('build-dotnet-binding.ps1', 'validate_policy.py'):
+            shutil.copyfile(ROOT / 'scripts' / name, repo / 'scripts' / name)
+        shutil.copyfile(ROOT / 'update-policy.ps1', repo / 'update-policy.ps1')
+        policy = repo / 'policy.json'
+        binding = repo / 'binding.json'
+        policy.write_bytes(self.policy_file.read_bytes())
+        built = self.powershell(repo / 'scripts/build-dotnet-binding.ps1',
+            RuntimeRoot=repo, PolicyPath=policy, OutputPath=binding)
+        self.assertEqual(built.returncode, 0, built.stderr)
+        previous = (policy.read_bytes(), binding.read_bytes())
+        candidate = self.directory / 'policy-candidate.json'
+        candidate.write_text(json.dumps(dict(self.policy, read_quota_bytes=4096)), encoding='utf-8')
+        update = self.powershell(repo / 'update-policy.ps1', RepoRoot=repo, PolicyPath=candidate)
+        self.assertEqual(update.returncode, 0, update.stderr)
+        anchor = json.loads(binding.read_bytes())
+        self.assertEqual(anchor['policy']['path'], str(policy))
+        self.assertEqual(anchor['policy']['sha256'], hashlib.sha256(policy.read_bytes()).hexdigest())
+        self.assertEqual({Path(item['path']).name for item in anchor['runtime_files']}, set(self.runtime_names()))
+        self.assertEqual(anchor['phase'], 'csharp_managed' if 'CommandEntry.dll' in self.runtime_names() else 'csharp_native_aot')
+        backups = list((repo / 'policy-backups').iterdir())
+        self.assertEqual(len(backups), 1)
+        self.assertEqual(((backups[0] / 'policy.json').read_bytes(), (backups[0] / 'binding.json').read_bytes()), previous)
+        valid = Client(policy, binding, repo / 'CommandEntry.exe')
+        self.assertEqual(len(valid.rpc('tools/list', {})['tools']), 6)
+        valid.close()
+        good_pair = (policy.read_bytes(), binding.read_bytes())
+        candidate.write_text(json.dumps(dict(self.policy, read_quota_bytes=0)), encoding='utf-8')
+        invalid = self.powershell(repo / 'update-policy.ps1', RepoRoot=repo, PolicyPath=candidate)
+        self.assertNotEqual(invalid.returncode, 0)
+        self.assertIn(b'validation failed', invalid.stderr)
+        self.assertEqual((policy.read_bytes(), binding.read_bytes()), good_pair)
+        candidate.write_text(json.dumps(dict(self.policy, read_quota_bytes=8192)), encoding='utf-8')
+        builder = repo / 'scripts/build-dotnet-binding.ps1'
+        with builder.open('a', encoding='utf-8') as output:
+            output.write("\nthrow 'injected_binding_failure'\n")
+        failed = self.powershell(repo / 'update-policy.ps1', RepoRoot=repo, PolicyPath=candidate)
+        self.assertNotEqual(failed.returncode, 0)
+        self.assertIn(b'injected_binding_failure', failed.stderr)
+        self.assertEqual((policy.read_bytes(), binding.read_bytes()), good_pair)
+        restored = Client(policy, binding, repo / 'CommandEntry.exe')
+        self.addCleanup(restored.close)
+        self.assertEqual(len(restored.rpc('tools/list', {})['tools']), 6)
 
 
 if __name__ == '__main__':

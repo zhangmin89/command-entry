@@ -14,7 +14,7 @@
   detected by the server startup self-check (hash mismatch) and refused.
 
 .PARAMETER RepoRoot
-  Directory containing server.py, scripts/, policy.json, binding.json.
+  Directory containing CommandEntry.exe or server.py, scripts/, policy.json, binding.json.
 
 .PARAMETER PolicyPath
   Path of an already-edited policy to validate and deploy.
@@ -39,7 +39,13 @@ $ErrorActionPreference = 'Stop'
 $repo = [IO.Path]::GetFullPath($RepoRoot)
 $livePolicy = Join-Path $repo 'policy.json'
 $bindingFile = Join-Path $repo 'binding.json'
-if (-not (Test-Path -LiteralPath (Join-Path $repo 'server.py'))) { throw 'RepoRoot does not contain server.py.' }
+$dotnetRuntime = Test-Path -LiteralPath (Join-Path -Path $repo -ChildPath 'CommandEntry.exe') -PathType Leaf
+if (-not $dotnetRuntime -and -not (Test-Path -LiteralPath (Join-Path -Path $repo -ChildPath 'server.py') -PathType Leaf)) {
+    throw 'RepoRoot does not contain CommandEntry.exe or server.py.'
+}
+if ($dotnetRuntime -and -not (Test-Path -LiteralPath (Join-Path -Path $repo -ChildPath 'scripts\build-dotnet-binding.ps1') -PathType Leaf)) {
+    throw 'The .NET runtime requires scripts\build-dotnet-binding.ps1.'
+}
 if (-not (Test-Path -LiteralPath $livePolicy)) { throw "Live policy not found: $livePolicy" }
 
 # ---------- stage 1: build the candidate (nothing live is touched) ----------
@@ -86,8 +92,16 @@ try {
     } else {
         Write-Output 'Candidate IS the live policy: validation + re-pin only, nothing to commit.'
     }
-    $rebuilt = & $python -X utf8 (Join-Path $repo 'scripts\build_binding.py') --policy $livePolicy --out $bindingFile
-    if ($LASTEXITCODE -ne 0) { throw "build_binding exited $LASTEXITCODE" }
+    if ($dotnetRuntime) {
+        $candidateBinding = [IO.Path]::GetFullPath((Join-Path -Path $repo -ChildPath ("binding-candidate-" + $stamp + ".json")))
+        $bindingParameters = @{ RuntimeRoot = $repo; PolicyPath = $livePolicy; OutputPath = $candidateBinding }
+        $rebuilt = & (Join-Path -Path $repo -ChildPath 'scripts\build-dotnet-binding.ps1') @bindingParameters
+        Move-Item -LiteralPath $candidateBinding -Destination $bindingFile -Force -ErrorAction Stop
+    } else {
+        $rebuilt = & $python -X utf8 (Join-Path $repo 'scripts\build_binding.py') --policy $livePolicy --out $bindingFile
+        $bindingExit = $LASTEXITCODE
+        if ($bindingExit -ne 0) { throw "build_binding exited $bindingExit" }
+    }
 } catch {
     Copy-Item -LiteralPath (Join-Path $backup 'policy.json') -Destination $livePolicy -Force
     if (Test-Path -LiteralPath (Join-Path $backup 'binding.json')) {

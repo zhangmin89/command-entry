@@ -23,6 +23,11 @@ if (-not (Test-Path -LiteralPath ([System.IO.Path]::GetDirectoryName($bindingFil
 }
 
 $runtimeNames = @('CommandEntry.exe', 'invoke.ps1', 'check_powershell.ps1', 'check_python.py')
+$phase = 'csharp_native_aot'
+if (Test-Path -LiteralPath (Join-Path -Path $runtimeDirectory -ChildPath 'CommandEntry.dll') -PathType Leaf) {
+    $runtimeNames += @('CommandEntry.dll', 'CommandEntry.deps.json', 'CommandEntry.runtimeconfig.json')
+    $phase = 'csharp_managed'
+}
 $handles = [System.Collections.Generic.List[System.IO.FileStream]]::new()
 function Get-LockedDigest {
     param([Parameter(Mandatory = $true)][string]$LiteralPath)
@@ -42,7 +47,7 @@ try {
     )
     $binding = @{
         schema_version = 2
-        phase = 'csharp_native_aot'
+        phase = $phase
         policy = @{ path = $policyFile; sha256 = $policyDigest }
         runtime_files = $runtimeFiles
     }
@@ -52,7 +57,7 @@ try {
     try { $target.Write($bytes, 0, $bytes.Length); $target.Flush($true) }
     finally { $target.Dispose() }
     $verified = [System.IO.File]::ReadAllText($bindingFile, $encoding) | ConvertFrom-Json -AsHashtable
-    if ($verified.schema_version -ne 2 -or $verified.runtime_files.Count -ne 4 -or $verified.policy.sha256 -ne $policyDigest) {
+    if ($verified.schema_version -ne 2 -or $verified.runtime_files.Count -ne $runtimeNames.Count -or $verified.policy.sha256 -ne $policyDigest) {
         throw 'Written binding did not pass artifact validation.'
     }
     @{ written = $bindingFile; files = $verified.runtime_files.Count; policy_sha256 = $policyDigest } | ConvertTo-Json -Compress

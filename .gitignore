@@ -223,3 +223,4 @@ binding.json
 /src/**/bin/
 /src/**/obj/
 /artifacts/command-entry-win-x64/
+/artifacts/command-entry-conformance/

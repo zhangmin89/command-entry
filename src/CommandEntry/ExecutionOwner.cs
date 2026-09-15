@@ -12,6 +12,7 @@ internal static class ExecutionOwner
         var message = JsonNode.Parse(await Console.In.ReadLineAsync() ?? "").Object();
         Require(message["handshake"].Text() == "job_assigned", "job_handshake_required");
         string[] argv = message["argv"].Array().Select(a => a.String()).ToArray();
+        Require(argv.Length > 0, "worker_argv_required");
         var info = WindowsProcess.StartInfo(argv[0], argv.Skip(1), message["cwd"].String());
         info.RedirectStandardOutput = false; info.RedirectStandardError = false;
         using var input = message["stdin_file"] is null ? null : File.OpenRead(message["stdin_file"].String());
@@ -196,18 +197,24 @@ internal static class ExecutionOwner
             var codes = policy["operations"]![request["operation"].String()]?["acceptable_exit_codes"] as JsonArray ?? new JsonArray(0);
             result["operation_result"] = new JsonObject { ["acceptable_exit"] = result["state"].Text() == "exited" ? codes.Any(c => c.Integer("invalid_exit_code") == host.ExitCode) : null };
             result["subgoal"] = result["state"].Text() == "exited" ? ExecutionRecords.Acceptance(request) : new JsonObject { ["status"] = "unknown" };
+            Persist();
         }
         catch (Exception error) when (ExecutionRecords.Handled(error))
         {
-            finished.Cancel(); job?.Dispose();
-            if (monitor is not null) await monitor;
-            if (timer is not null) await timer;
             result["state"] = host is null ? "rejected" : "tool_error"; result["error"] = ExecutionRecords.Error(error); result["bindings"] = locks.Bindings.Copy();
-            if (host is not null) { await host.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(policy.Int("cleanup_seconds", 10))); result["process"]!["exit_code"] = host.ExitCode; }
+            await ExecutionCleanup.PersistFailure(result, async () =>
+            {
+                finished.Cancel(); job?.Dispose();
+                if (monitor is not null) await monitor;
+                if (timer is not null) await timer;
+                if (host is not null) { await host.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(policy.Int("cleanup_seconds", 10))); result["process"]!["exit_code"] = host.ExitCode; }
+            }, Persist);
         }
-        finally { finished.Cancel(); job?.Dispose(); host?.Dispose(); }
-        Persist();
-        foreach (var capture in captures.Values) capture.Dispose();
+        finally
+        {
+            finished.Cancel(); job?.Dispose(); host?.Dispose();
+            foreach (var capture in captures.Values) capture.Dispose();
+        }
         return ExecutionRecords.Bounded(result);
     }
 }

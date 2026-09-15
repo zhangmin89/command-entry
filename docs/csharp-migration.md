@@ -41,6 +41,19 @@ server exit survival, and policy/runtime integrity rejection.
 
 Test records are retained under `.codex-command-records/csharp-test-*`.
 
+For deterministic numeric parity and cleanup fault injection, build the
+existing conditional harness into a separate output directory:
+
+```text
+dotnet build src/CommandEntry/CommandEntry.csproj --configuration Release -p:DefineConstants=CONFORMANCE --output artifacts/command-entry-conformance --verbosity minimal
+dotnet artifacts/command-entry-conformance/CommandEntry.dll conformance
+```
+
+Run these from this repository root. The harness uses its configured Python
+interpreter, a fixed random seed, and retained cleanup records. Publish without
+`CONFORMANCE` for deployment. `scripts/check-read-text-parity.py` records both
+implementations' CR/LF, decoding and block-boundary results for diagnosis.
+
 ## Runtime layout
 
 | File | Purpose |
@@ -75,6 +88,15 @@ Python sentinel and policy maintenance scripts remain separate components.
   format. Atomic claims and publication preserve the duplicate-start rules.
 - Output continues draining after retention is exhausted. Only bounded,
   redacted text is persisted. Output offsets count Unicode code points.
+- `read_text` preserves the Python CR lookahead and loaded-block diagnostic
+  behavior: a fault before the CR line is completed rejects the range; a fault
+  later in an already-loaded block is reported as `decode_warning` after a
+  complete range. It does not scan subsequent blocks just to find warnings.
+- MCP error messages are redacted, so credential-shaped diagnostic text can
+  be replaced. This is intentional. A corrupt `wait-state.json` remains a
+  structured failure requiring operator investigation; it is never deleted
+  or silently reset. Cleanup errors preserve the primary error in the record
+  and do not turn an unconfirmed process exit into a successful exit.
 - Existing path, program, syntax, retry and acceptance checks remain in the
   execution path. Policy checks are not replaced by the SDK or process API.
 - Agent Governance Toolkit and SecureString are not introduced. The SDK and
@@ -85,8 +107,8 @@ Python sentinel and policy maintenance scripts remain separate components.
 Deployment and changes to installed configuration remain user operations.
 Use a separate release directory and stop creating work through the old
 server before switching. Retain existing execution records and the sentinel.
-The previous Python deployment scripts target Python runtime files; they
-must not be used to overwrite this C# release.
+The old `scripts/build_binding.py` targets Python runtime files and must not
+be used to build a C# binding. Use the updated maintenance workflow below.
 
 1. Copy the published runtime files into the intended release directory.
 2. Keep the reviewed installed policy's program mappings, roots, limits and
@@ -96,6 +118,12 @@ must not be used to overwrite this C# release.
    `RuntimeRoot`, `PolicyPath`, and a **new** `OutputPath`. It hashes the native
    executable and three script helpers while holding read-only handles, then
    creates and validates a schema-version-2 binding. It refuses overwrite.
+   Startup requires the current process executable, the owner/worker executable
+   and every helper to be present in the verified set. Paths are resolved and
+   compared using Windows case-insensitive semantics; another directory's
+   identical files cannot stand in for the running files. Managed development
+   apphost bindings additionally cover `CommandEntry.dll`, `.deps.json` and
+   `.runtimeconfig.json`; the builder includes these when the DLL is present.
 4. Point the MCP client command at the release's `CommandEntry.exe`, with
    argument-list entries `--policy`, the reviewed policy path, `--binding`,
    and the new binding path. Restart the server and verify tools/list plus
@@ -105,6 +133,23 @@ Keep `serve_root` and `record_root` aligned with the existing installation
 when previous execution IDs must remain queryable. Never remove an unknown
 execution merely to permit a restart; use cancellation to confirm all known
 process instances are dead.
+
+For later policy updates, install the updated `update-policy.ps1`,
+`scripts/build-dotnet-binding.ps1` and the existing `scripts/validate_policy.py`
+alongside the release. Policy maintenance still uses the configured Python
+interpreter and the unchanged policy validation rules. Invoke the update script
+through the approved PowerShell script operation with a JSON parameters file.
+`RepoRoot` is the release root; `PolicyPath` is the reviewed candidate policy,
+or use the existing `AddProgram` parameters for an approved program change.
+
+When `CommandEntry.exe` exists, the updater uses the .NET binding builder even
+if old Python files are also present. It validates the candidate first, backs
+up the old policy/binding pair, commits the policy, creates a new candidate
+binding with the final policy path, and replaces the binding only after the
+builder succeeds. A failure restores the old pair; diagnostic candidate files
+are retained. The two files are not an atomic multi-file transaction: stop
+starting work during maintenance, and restart the server after a successful
+update. Python-only installations retain their existing update path.
 
 ## Validation limits
 

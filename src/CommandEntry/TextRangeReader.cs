@@ -53,6 +53,7 @@ internal static class TextRangeReader
         int lineIndex = 0, served = 0, servedBytes = 0, pendingBytes = 0;
         bool pendingCr = false, hasLine = false, stopped = false;
         JsonObject? error = null;
+        string? decodeWarning = null;
         void FinishLine()
         {
             lineIndex++;
@@ -97,21 +98,36 @@ internal static class TextRangeReader
         }
         catch (DecoderFallbackException failure)
         {
-            if (pendingCr) FinishLine();
-            if (served < count || error is not null)
-                return error ?? new JsonObject { ["error"] = "decoding_failed_strict", ["encoding_tried"] = encoding,
-                    ["detail"] = failure.Message[..Math.Min(200, failure.Message.Length)],
-                    ["suggested_encodings"] = new JsonArray(new[] { "gbk", "utf-16-le", "utf-16", "utf-8" }
-                        .Where(name => CanDecode(prefix, name)).Select(name => (JsonNode?)JsonValue.Create(name)).ToArray()) };
-            stopped = true;
+            return error ?? new JsonObject { ["error"] = "decoding_failed_strict", ["encoding_tried"] = encoding,
+                ["detail"] = failure.Message[..Math.Min(200, failure.Message.Length)],
+                ["suggested_encodings"] = new JsonArray(new[] { "gbk", "utf-16-le", "utf-16", "utf-8" }
+                    .Where(name => CanDecode(prefix, name)).Select(name => (JsonNode?)JsonValue.Create(name)).ToArray()) };
         }
-        return error ?? new JsonObject
+        if (error is not null) return error;
+        if (stopped)
+        {
+            // Python checks the whole loaded block. Do not read another block,
+            // flush an incomplete trailing character, or accumulate later lines.
+            try
+            {
+                while (byteIndex < byteCount)
+                    decoder.GetChars(bytes.AsSpan(byteIndex++, 1), characters, flush: false);
+            }
+            catch (DecoderFallbackException failure)
+            {
+                decodeWarning = "The requested range was fully served; a strict decode fault exists beyond it: "
+                    + failure.Message[..Math.Min(150, failure.Message.Length)];
+            }
+        }
+        var result = new JsonObject
         {
             ["file"] = path, ["encoding_used"] = encoding, ["text"] = payload.ToString(), ["start_line"] = start,
             ["lines_served"] = served, ["total_lines"] = eof && !stopped ? lineIndex : null,
             ["total_lines_known"] = eof && !stopped, ["total_bytes"] = totalBytes, ["remaining"] = stopped,
             ["next_start_line"] = start + served, ["decoding_loss"] = false
         };
+        if (decodeWarning is not null) result["decode_warning"] = decodeWarning;
+        return result;
     }
     private static bool CanDecode(byte[] bytes, string encoding)
     {

@@ -147,16 +147,18 @@ internal static class RecordJson
                     case JsonValueKind.String: AppendString(value.GetValue<string>(), text); break;
                     case JsonValueKind.True: text.Append("true"); break;
                     case JsonValueKind.False: text.Append("false"); break;
-                    case JsonValueKind.Number: text.Append(Number(value.ToJsonString())); break;
+                    case JsonValueKind.Number:
+                        text.Append(Number(value.ToJsonString(), !value.TryGetValue<JsonElement>(out _) && value.TryGetValue<double>(out _)));
+                        break;
                     default: throw new InvalidRequest("unsupported_json_value");
                 }
                 break;
         }
     }
 
-    private static string Number(string raw)
+    private static string Number(string raw, bool createdDouble = false)
     {
-        if (raw.IndexOfAny(['.', 'e', 'E']) < 0)
+        if (!createdDouble && raw.IndexOfAny(['.', 'e', 'E']) < 0)
             return BigInteger.Parse(raw, CultureInfo.InvariantCulture).ToString(CultureInfo.InvariantCulture);
         double number = double.Parse(raw, CultureInfo.InvariantCulture);
         string shortest = number.ToString("R", CultureInfo.InvariantCulture).ToLowerInvariant();

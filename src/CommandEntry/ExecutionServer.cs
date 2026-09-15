@@ -38,14 +38,29 @@ internal sealed partial class ExecutionServer
                 ["missing_env"] = dotnet && string.IsNullOrEmpty(Environment.GetEnvironmentVariable("PROCESSOR_ARCHITECTURE")) ? new JsonArray("PROCESSOR_ARCHITECTURE") : new JsonArray() } });
     }
 
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("SingleFile", "IL3000",
+        Justification = "Native AOT intentionally has no assembly file; a managed apphost must bind its separate assembly and configuration.")]
     private void VerifyBinding(string path)
     {
         var binding = Read(path);
         Require(binding.Int("schema_version", 0) == 2, "binding_version_required");
         Require(BusinessPaths.Resolve(binding["policy"]!["path"].String()).Equals(policyPath, StringComparison.OrdinalIgnoreCase), "binding_policy_path_mismatch");
         Require(policyHash == binding["policy"]!["sha256"].Text(), "policy_changed_since_review");
+        using var locks = new FileBindings();
+        var verified = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var item in binding["runtime_files"].Array())
-            Require(FileHash(item!["path"].String()) == item["sha256"].Text(), "runtime_changed_since_review_" + Path.GetFileName(item["path"].String()));
+        {
+            string file = BusinessPaths.Resolve(item!["path"].String(), "file");
+            locks.Add(file);
+            Require(locks.Bindings[file].Text() == item["sha256"].Text(), "runtime_changed_since_review_" + Path.GetFileName(file));
+            verified.Add(file);
+        }
+        string[] names = ["CommandEntry.exe", "invoke.ps1", "check_powershell.ps1", "check_python.py"];
+        if (typeof(ExecutionServer).Assembly.Location.Length > 0)
+            names = [.. names, "CommandEntry.dll", "CommandEntry.deps.json", "CommandEntry.runtimeconfig.json"];
+        foreach (string file in names.Select(name => Path.Combine(AppContext.BaseDirectory, name))
+            .Append(Environment.ProcessPath ?? throw new InvalidRequest("process_path_unavailable")))
+            Require(verified.Contains(BusinessPaths.Resolve(file, "file")), "runtime_binding_missing_" + Path.GetFileName(file));
     }
 
     private void Log(string kind, JsonObject? fields = null)
@@ -128,7 +143,12 @@ internal sealed partial class ExecutionServer
                 "wait" => await Wait(form), "read_text" => TextRangeReader.Read(form, policy),
                 _ => throw new InvalidRequest("unknown_tool")
             };
-            Log(name); return result;
+            Log(name, name == "start_operation" ? new JsonObject
+            {
+                ["dedup"] = result["in_flight_dedup"]?.Copy(),
+                ["retry"] = (form["business"] as JsonObject ?? form)["previous_execution"].Text() is { Length: > 0 }
+            } : null);
+            return result;
         }
         catch (Exception error) when (ExecutionRecords.Handled(error))
         {
