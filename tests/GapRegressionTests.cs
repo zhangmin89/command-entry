@@ -89,7 +89,7 @@ public sealed class GapRegressionTests
     public void IndexUnsupportedVersionIsRejected()
     {
         string root = NewDirectory(); var index = Seed(root);
-        var entry = Entry(3); entry["schema_version"] = 2; Append(root, entry);
+        var entry = Entry(3); entry["schema_version"] = 3; Append(root, entry);
         RejectedUnchanged(index, root, "publication_index_version_required");
         RejectedUnchanged(new PublicationIndex(root), root, "publication_index_version_required");
     }

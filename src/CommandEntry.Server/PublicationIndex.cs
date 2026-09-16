@@ -11,7 +11,8 @@ internal sealed class PublicationIndex(string root)
     private readonly Dictionary<string, Entry> entries = new(StringComparer.Ordinal);
     private long offset;
     private bool loaded;
-    private sealed record Entry(long Count, string Id);
+    private sealed record Entry(long Count, string Id, string? Preparation = null, string? PreparationHash = null, bool Pending = false);
+    private string PreparationPath(string id) => Path.Combine(root, "_prepared", id + ".json");
 
     internal Session Open(Func<IEnumerable<(string Path, JsonObject Envelope)>> history)
     {
@@ -51,6 +52,7 @@ internal sealed class PublicationIndex(string root)
                         if (JsonFields.IsUuid(claimed)) id = claimed!;
                     }
                     catch (Exception error) when (ExecutionRecords.Handled(error)) { /* ClaimIdentity handles invalid claims. */ }
+                    Require(indexed?.Pending != true, "publication_preparation_history_conflict");
                     session.Append(item.Key, item.Value.Count, id);
                 }
                 loaded = true;
@@ -73,15 +75,35 @@ internal sealed class PublicationIndex(string root)
             while (reader.ReadLine() is { } line)
             {
                 var value = JsonNode.Parse(line).Object();
-                Require(value.Int("schema_version", 0) == 1, "publication_index_version_required");
+                int version = value.Int("schema_version", 0);
+                Require(version is 1 or 2, "publication_index_version_required");
                 string fingerprint = value["content_fingerprint"].String();
                 string id = value["execution_id"].String();
                 long count = value["count"].Integer("publication_index_count_required");
                 Require(fingerprint.Length == 64 && fingerprint.All(c => c is >= '0' and <= '9' or >= 'a' and <= 'f')
                     && JsonFields.IsUuid(id) && count > 0, "publication_index_entry_invalid");
                 Entry? previous = updates.GetValueOrDefault(fingerprint) ?? entries.GetValueOrDefault(fingerprint);
-                Require(previous is null || count > previous.Count, "publication_index_count_not_increasing");
-                updates[fingerprint] = new(count, id);
+                string? preparation = null, preparationHash = null;
+                bool pending = false, committed = false;
+                if (version == 2)
+                {
+                    string phase = value["phase"].String("publication_index_phase_required");
+                    Require(phase is "prepared" or "launch_committed", "publication_index_phase_invalid");
+                    preparation = value["preparation"].String("publication_preparation_required");
+                    preparationHash = value["preparation_sha256"].String("publication_preparation_hash_required");
+                    Require(JsonFields.IsUuid(preparation) && preparationHash.Length == 64
+                        && preparationHash.All(c => c is >= '0' and <= '9' or >= 'a' and <= 'f'), "publication_preparation_invalid");
+                    pending = phase == "prepared"; committed = !pending;
+                }
+                if (committed)
+                    Require(previous is { Pending: true } && count == previous.Count && id == previous.Id
+                        && preparation == previous.Preparation && preparationHash == previous.PreparationHash, "publication_commit_without_matching_preparation");
+                else
+                {
+                    Require(previous is null || count > previous.Count, "publication_index_count_not_increasing");
+                    Require(previous?.Pending != true, "publication_preparation_uncommitted");
+                }
+                updates[fingerprint] = new(count, id, preparation, preparationHash, pending);
             }
         }
         foreach (var pair in updates) entries[pair.Key] = pair.Value;
@@ -93,13 +115,51 @@ internal sealed class PublicationIndex(string root)
         internal long Count(string fingerprint) => index.entries.GetValueOrDefault(fingerprint)?.Count ?? 0;
         internal string? Latest(string fingerprint) => index.entries.GetValueOrDefault(fingerprint)?.Id;
         internal void Reserve(string fingerprint, string id) => Append(fingerprint, checked(Count(fingerprint) + 1), id);
-        internal void Append(string fingerprint, long count, string id)
+        internal JsonObject? ReadPrepared(string fingerprint)
         {
-            byte[] bytes = Packed(new JsonObject { ["schema_version"] = 1, ["content_fingerprint"] = fingerprint,
-                ["count"] = count, ["execution_id"] = id });
+            var entry = index.entries.GetValueOrDefault(fingerprint);
+            if (entry?.Pending != true) return null;
+            string file = index.PreparationPath(entry.Preparation!);
+            using var locks = new FileBindings();
+            locks.Add(file);
+            Require(locks.Bindings[BusinessPaths.Resolve(file, "file")].Text() == entry.PreparationHash, "publication_preparation_changed");
+            return Read(file);
+        }
+
+        internal void Prepare(string fingerprint, string id, JsonObject envelope, JsonObject policy)
+        {
+            Require(index.entries.GetValueOrDefault(fingerprint)?.Pending != true, "publication_preparation_uncommitted");
+            string preparation = Guid.NewGuid().ToString(), file = index.PreparationPath(preparation);
+            Directory.CreateDirectory(Path.GetDirectoryName(file)!);
+            WriteNew(file, new JsonObject { ["envelope"] = envelope.Copy(), ["policy"] = policy.Copy(),
+                ["previous_execution_id"] = Latest(fingerprint) });
+            var entry = new Entry(checked(Count(fingerprint) + 1), id, preparation, FileHash(file), Pending: true);
+            AppendPhase(fingerprint, entry);
+        }
+
+        internal void Commit(string fingerprint)
+        {
+            var entry = index.entries[fingerprint];
+            Require(entry.Pending, "publication_commit_without_matching_preparation");
+            AppendPhase(fingerprint, entry with { Pending = false });
+        }
+
+        private void AppendPhase(string fingerprint, Entry entry) => Persist(fingerprint, entry, new JsonObject
+        {
+            ["schema_version"] = 2, ["content_fingerprint"] = fingerprint, ["count"] = entry.Count, ["execution_id"] = entry.Id,
+            ["phase"] = entry.Pending ? "prepared" : "launch_committed", ["preparation"] = entry.Preparation,
+            ["preparation_sha256"] = entry.PreparationHash
+        });
+
+        internal void Append(string fingerprint, long count, string id) => Persist(fingerprint, new(count, id),
+            new JsonObject { ["schema_version"] = 1, ["content_fingerprint"] = fingerprint, ["count"] = count, ["execution_id"] = id });
+
+        private void Persist(string fingerprint, Entry entry, JsonObject value)
+        {
+            byte[] bytes = Packed(value);
             stream.Position = stream.Length;
             stream.Write(bytes); stream.WriteByte((byte)'\n'); stream.Flush(flushToDisk: true);
-            index.entries[fingerprint] = new(count, id);
+            index.entries[fingerprint] = entry;
             index.offset = stream.Length;
         }
         public void Dispose() { stream.Dispose(); mutex.Dispose(); }

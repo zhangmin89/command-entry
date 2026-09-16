@@ -82,5 +82,9 @@ No deployment is performed.
 
 The policy template and both execution entry points require policy version 3.
 Regression tests reject unsupported versions before a second business execution.
-Binding schema version 2 and publication-index schema version 1 are separate
-formats; their versions do not follow the policy revision.
+Binding schema version 2 and publication-index schema versions 1/2 are separate
+formats; their versions do not follow the policy revision. New publications use
+schema 2 with hash-bound prepared plans and a durable launch-commit transition.
+`AuditV7Tests` exercises interrupted publication stages with/without an old
+claim, warm/restarted servers, conflicting evidence, concurrent event writers,
+wait-lock diagnostics and ASCII handshake values.

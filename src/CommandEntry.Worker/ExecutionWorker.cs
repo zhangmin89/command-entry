@@ -8,6 +8,8 @@ internal static class ExecutionWorker
 {
     internal static async Task<int> Run()
     {
+        // The owner's Packed(message) escapes non-ASCII keys and values, so this
+        // handshake is independent of the console input code page.
         var message = JsonNode.Parse(await Console.In.ReadLineAsync() ?? "").Object();
         Require(message["handshake"].Text() == "job_assigned", "job_handshake_required");
         string[] argv = message["argv"].Array().Select(a => a.String()).ToArray();

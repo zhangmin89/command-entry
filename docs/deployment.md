@@ -55,7 +55,7 @@ CommandEntry.exe sentinel --records <hook-records-path>
    envelope-only sentinel record.
 8. Keep `serve_root` and `record_root` aligned with the previous installation
    when existing execution IDs must remain queryable. Preserve a consistent
-   backup of claims, published requests, `serve_root/publication-index.jsonl`
+   backup of claims, published requests, `serve_root/_prepared/`, `serve_root/publication-index.jsonl`
    and execution records, including their sidecars. Retain the policy mappings needed to resolve each original cwd to
    its record root; copying one root alone does not preserve the execution view.
 
@@ -65,14 +65,26 @@ the install location and hook-registration trust still protect the hook entry.
 
 The first valid start in each server loads the publication index and scans old
 requests once. Later starts read only appended index entries. Stop all old
-server writers before switching: versions without this index must not publish
-into the same `serve_root` concurrently with this version. Reservations are
-flushed before publication or owner launch; an interrupted reservation can
-leave a counter gap and block the affected intent pending manual recovery.
-Do not delete or rebuild the index to clear that block. Preserve it with the
-claims and original request/record evidence. A rollback to an older writer
-requires reconciling these reservations first; merely restoring the old binary
-does not make unpublished reservations safe to ignore.
+server writers before switching: older writers must not publish into the same
+`serve_root` concurrently with this version. New journal entries use schema 2:
+`prepared` reserves the identity and hashes an immutable request/policy plan
+under `_prepared/`; `launch_committed` is flushed only after request, policy and
+claim publication, and always before owner launch. Schema 1 remains readable
+but cannot establish that launch was never authorized.
+
+Resubmitting the same business content resumes a schema-2 prepared publication
+under the original identity and resource limits. Recovery checks the plan hash,
+unchanged policy, claim identity, matching existing publication files and absence
+of an execution record. It preserves the plan and does not replace conflicting
+evidence. A recorded publication failure remains queryable and does not turn
+into an automatic business launch when publication is completed.
+
+Once launch is committed, missing records and unknown process state retain the
+existing deduplication block; a crash between commitment and owner launch is
+not automatically replayed. Schema-1 interrupted reservations also remain
+blocked. Preserve the index, prepared plans, claims and original request/record
+evidence; do not edit or rebuild the index to clear a block. Older versions
+reject schema 2, so binary rollback alone is not a supported recovery procedure.
 
 ## Policy maintenance
 

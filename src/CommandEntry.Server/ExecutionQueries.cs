@@ -98,7 +98,11 @@ internal sealed partial class ExecutionServer
         }
         int budget = policy.Int("wait_budget_seconds", 30), interval = policy.Int("wait_poll_interval_seconds", 5), threshold = policy.Int("wait_stop_after_no_progress", 12);
         var elapsed = Stopwatch.StartNew();
-        using var mutex = new FileMutex(Path.Combine(directory, "wait-state.lock"));
+        FileMutex mutex;
+        try { mutex = new FileMutex(Path.Combine(directory, "wait-state.lock")); }
+        catch (IOException error) when ((error.HResult & 0xffff) is 32 or 33)
+        { throw new InvalidRequest("wait_in_progress_retry_later"); }
+        using var heldWait = mutex;
         string file = Path.Combine(directory, "wait-state.json");
         var journal = File.Exists(file) ? Read(file) : new JsonObject { ["count"] = 0, ["previous"] = null };
         JsonObject? observed = null;

@@ -7,7 +7,7 @@ namespace CommandEntry;
 
 internal sealed partial class ExecutionServer
 {
-    private readonly string policyPath, policyHash, serveRoot, logRoot;
+    private readonly string policyPath, policyHash, serveRoot, logRoot, logMutexName;
     private readonly JsonObject policy;
     private readonly uint spawnFlags;
     private readonly bool orphanGuaranteed;
@@ -29,6 +29,7 @@ internal sealed partial class ExecutionServer
         serveRoot = BusinessPaths.Resolve(policy["serve_root"].String()); Directory.CreateDirectory(serveRoot);
         publications = new(serveRoot);
         logRoot = BusinessPaths.Resolve(policy["log_root"].Text() ?? Path.Combine(Path.GetDirectoryName(this.policyPath)!, "logs"));
+        logMutexName = @"Global\CommandEntry.ServerEvents." + Hash(Utf8.GetBytes(logRoot.ToUpperInvariant()));
         (spawnFlags, orphanGuaranteed) = OwnerLauncher.Flags();
         var missing = new JsonArray(); bool dotnet = false;
         foreach (var pair in policy.ObjectOrEmpty("programs"))
@@ -71,7 +72,11 @@ internal sealed partial class ExecutionServer
         {
             Directory.CreateDirectory(logRoot);
             fields ??= new(); fields["kind"] = kind; fields["ts"] = WindowsProcess.UnixNow;
-            File.AppendAllText(Path.Combine(logRoot, "server-events.jsonl"), Utf8.GetString(Packed(fields)) + '\n', Utf8);
+            using var mutex = new Mutex(false, logMutexName);
+            try { mutex.WaitOne(); }
+            catch (AbandonedMutexException) { /* Ownership transfers when a previous writer exits. */ }
+            try { File.AppendAllText(Path.Combine(logRoot, "server-events.jsonl"), Utf8.GetString(Packed(fields)) + '\n', Utf8); }
+            finally { mutex.ReleaseMutex(); }
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException) { /* Diagnostics do not break serving. */ }
     }
@@ -241,58 +246,87 @@ internal sealed partial class ExecutionServer
         using (var index = publications.Open(() => History()))
         {
             string claimPath = Path.Combine(claimDirectory, "claim.json");
-            string? existing = ClaimIdentity(fingerprint, claimPath, index);
-            Require(index.Latest(fingerprint) is null || index.Latest(fingerprint) == existing,
-                "claim_index_mismatch: preserve evidence for manual recovery");
-            if (existing is not null)
+            var preparation = index.ReadPrepared(fingerprint);
+            JsonObject envelope;
+            if (preparation is null)
             {
-                Require(File.Exists(Path.Combine(serveRoot, existing, "request.json")),
-                    "claim_publication_missing: " + existing + "; preserve the claim; manual recovery of the original request is required.");
-                string record = Locate(existing); string name = ExecutionRecords.Snapshot(record)["state"].String();
-                bool notStarted = StartupFailureWithoutResult(existing, record) is not null;
-                if (!notStarted && !ExecutionRecords.ConfirmedTerminal.Contains(name) && !Abandoned(record)) return Existing(existing);
+                string? existing = ClaimIdentity(fingerprint, claimPath, index);
+                Require(index.Latest(fingerprint) is null || index.Latest(fingerprint) == existing,
+                    "claim_index_mismatch: preserve evidence for manual recovery");
+                if (existing is not null)
+                {
+                    Require(File.Exists(Path.Combine(serveRoot, existing, "request.json")),
+                        "claim_publication_missing: " + existing + "; preserve the claim; manual recovery of the original request is required.");
+                    string record = Locate(existing); string name = ExecutionRecords.Snapshot(record)["state"].String();
+                    bool notStarted = StartupFailureWithoutResult(existing, record) is not null;
+                    if (!notStarted && !ExecutionRecords.ConfirmedTerminal.Contains(name) && !Abandoned(record)) return Existing(existing);
+                }
+                string task = "mcp-direct", step; string? previousRequest = null; long attempt = 0;
+                if (form.ContainsKey("previous_execution"))
+                {
+                    string previousId = form["previous_execution"].String("execution_id_required"); Require(JsonFields.IsUuid(previousId), "execution_id_required");
+                    string previousPath = Path.Combine(serveRoot, previousId, "request.json"); Require(File.Exists(previousPath), "previous_execution_not_found");
+                    var previousEnvelope = ReadRequest(previousPath); var origin = RequestShape.Shape(previousEnvelope["business"].Object());
+                    Require(previousEnvelope["content_fingerprint"].Text() == fingerprint, "previous_execution_content_mismatch");
+                    Require(ExecutionRecords.ConfirmedTerminal.Contains(ExecutionRecords.Snapshot(Locate(previousId))["state"].String()), "previous_attempt_not_confirmed_terminal");
+                    task = origin["task_ref"].String(); step = origin["step_ref"].String(); previousRequest = origin["request_id"].String(); attempt = origin["attempt"].Integer("invalid_attempt") + 1;
+                }
+                else step = fingerprint[..12] + "-" + checked(index.Count(fingerprint) + 1).ToString(System.Globalization.CultureInfo.InvariantCulture);
+                var business = new JsonObject(form.Where(p => p.Key is not "workdir" and not "previous_execution").Select(p => KeyValuePair.Create(p.Key, p.Value?.Copy())));
+                business["task_ref"] = task; business["step_ref"] = step; business["attempt"] = attempt; business["cwd"] = workdir;
+                foreach (var option in options) business[option.Key] = option.Value?.Copy();
+                if (previousRequest is not null) business["previous_request"] = previousRequest;
+                var request = RequestShape.Shape(business); requestId = request["request_id"].String(); id = ExecutionId(requestId);
+                Require(!policy["require_orphan_guarantee"].IsTrue() || orphanGuaranteed, "orphan_guarantee_required_but_unavailable");
+                Require(!Path.Exists(Path.Combine(BusinessPaths.Context(policy, cwd), id)),
+                    "execution_identity_already_recorded: " + id + "; preserve existing evidence; manual recovery of the original publication is required.");
+                envelope = new JsonObject { ["schema_version"] = 2, ["business"] = business, ["fingerprint"] = RequestDigest(request), ["content_fingerprint"] = fingerprint };
             }
-            string task = "mcp-direct", step; string? previousRequest = null; long attempt = 0;
-            if (form.ContainsKey("previous_execution"))
+            else
             {
-                string previousId = form["previous_execution"].String("execution_id_required"); Require(JsonFields.IsUuid(previousId), "execution_id_required");
-                string previousPath = Path.Combine(serveRoot, previousId, "request.json"); Require(File.Exists(previousPath), "previous_execution_not_found");
-                var previousEnvelope = ReadRequest(previousPath); var origin = RequestShape.Shape(previousEnvelope["business"].Object());
-                Require(previousEnvelope["content_fingerprint"].Text() == fingerprint, "previous_execution_content_mismatch");
-                Require(ExecutionRecords.ConfirmedTerminal.Contains(ExecutionRecords.Snapshot(Locate(previousId))["state"].String()), "previous_attempt_not_confirmed_terminal");
-                task = origin["task_ref"].String(); step = origin["step_ref"].String(); previousRequest = origin["request_id"].String(); attempt = origin["attempt"].Integer("invalid_attempt") + 1;
+                // Only a hash-bound prepared entry proves no launch was authorized.
+                // Legacy entries and launch-committed entries never take this path.
+                envelope = preparation["envelope"].Object();
+                Require(Digest(preparation["policy"]) == Digest(snapshot), "publication_preparation_policy_changed");
+                var request = RequestShape.Shape(envelope["business"].Object());
+                requestId = request["request_id"].String(); id = index.Latest(fingerprint)!;
+                Require(envelope["content_fingerprint"].Text() == fingerprint && MatchesRequest(envelope["fingerprint"].Text(), request)
+                    && ExecutionId(requestId) == id, "publication_preparation_identity_conflict");
+                if (File.Exists(claimPath))
+                {
+                    string? claimed = Read(claimPath)["execution_id"].Text();
+                    Require(claimed == id || (JsonFields.IsUuid(claimed) && claimed == preparation["previous_execution_id"].Text()),
+                        "claim_index_mismatch: preserve evidence for manual recovery");
+                }
+                Require(!policy["require_orphan_guarantee"].IsTrue() || orphanGuaranteed, "orphan_guarantee_required_but_unavailable");
+                Require(!Path.Exists(Path.Combine(BusinessPaths.Context(policy, cwd), id)),
+                    "execution_identity_already_recorded: " + id + "; preserve existing evidence; recovery cannot start another process.");
             }
-            else step = fingerprint[..12] + "-" + checked(index.Count(fingerprint) + 1).ToString(System.Globalization.CultureInfo.InvariantCulture);
-            var business = new JsonObject(form.Where(p => p.Key is not "workdir" and not "previous_execution").Select(p => KeyValuePair.Create(p.Key, p.Value?.Copy())));
-            business["task_ref"] = task; business["step_ref"] = step; business["attempt"] = attempt; business["cwd"] = workdir;
-            foreach (var option in options) business[option.Key] = option.Value?.Copy();
-            if (previousRequest is not null) business["previous_request"] = previousRequest;
-            var request = RequestShape.Shape(business); requestId = request["request_id"].String(); id = ExecutionId(requestId);
-            Require(!policy["require_orphan_guarantee"].IsTrue() || orphanGuaranteed, "orphan_guarantee_required_but_unavailable");
-            Require(!Path.Exists(Path.Combine(BusinessPaths.Context(policy, cwd), id)),
-                "execution_identity_already_recorded: " + id + "; preserve existing evidence; manual recovery of the original publication is required.");
             inputDirectory = Path.Combine(serveRoot, id);
-            index.Reserve(fingerprint, id);
-            if (!DirectoryCreation.TryCreateNew(inputDirectory))
-            {
-                string? rival = Find(fingerprint); Require(rival is not null, "serve_dir_collision_without_match: " + inputDirectory);
-                Save(claimPath, new JsonObject { ["execution_id"] = rival, ["republished_at_unix"] = WindowsProcess.UnixNow });
-                return Existing(rival!, collision: true);
-            }
-            var envelope = new JsonObject { ["schema_version"] = 2, ["business"] = business, ["fingerprint"] = RequestDigest(request), ["content_fingerprint"] = fingerprint };
-            string publication = Path.Combine(inputDirectory, "request.json");
+            string requestFile = Path.Combine(inputDirectory, "request.json"), policyFile = Path.Combine(inputDirectory, "policy.json");
+            CheckPublicationFile(requestFile, envelope); CheckPublicationFile(policyFile, snapshot);
+            if (preparation is null) index.Prepare(fingerprint, id, envelope, snapshot);
+            string publication = inputDirectory;
             try
             {
-                WriteNew(publication, envelope); publication = Path.Combine(inputDirectory, "policy.json"); WriteNew(publication, snapshot);
+                Directory.CreateDirectory(inputDirectory);
+                publication = requestFile; if (!File.Exists(publication)) PublishNew(publication, envelope);
+                publication = policyFile; if (!File.Exists(publication)) PublishNew(publication, snapshot);
                 publication = claimPath; Save(publication, new JsonObject { ["execution_id"] = id, ["published_at_unix"] = WindowsProcess.UnixNow });
             }
             catch (Exception error) when (ExecutionRecords.Handled(error))
             {
-                Save(Path.Combine(inputDirectory, "request.json"), envelope);
+                if (!File.Exists(requestFile)) PublishNew(requestFile, envelope);
                 var detail = ExecutionRecords.Error(error); detail["reason"] = publication + ": " + detail["reason"].String();
-                WriteNew(Path.Combine(inputDirectory, "serve-error.json"), new JsonObject { ["schema_version"] = 2, ["state"] = "not_started", ["execution_id"] = id, ["error"] = detail.Copy() });
+                string failureFile = Path.Combine(inputDirectory, "serve-error.json");
+                if (!File.Exists(failureFile)) PublishNew(failureFile, new JsonObject { ["schema_version"] = 2, ["state"] = "not_started", ["execution_id"] = id, ["error"] = detail.Copy() });
                 return StartResult(id, requestId, cwd, "start_failed", new JsonObject { ["error"] = detail }, "Input publication failed before spawning; the failure is queryable via status.");
             }
+            // This flushed transition precedes releasing the locks and starting the owner.
+            // A crash after this point remains unconfirmed and must never be replayed.
+            index.Commit(fingerprint);
+            if (StartupFailure(id) is { } recordedFailure)
+                return StartResult(id, requestId, cwd, "start_failed", recordedFailure, "Recovered publication retains its recorded startup failure; no process was started.");
         }
         try { OwnerLauncher.Start(inputDirectory, cwd, spawnFlags); }
         catch (Exception error) when (ExecutionRecords.Handled(error))
@@ -311,6 +345,11 @@ internal sealed partial class ExecutionServer
                 failure is null ? "Entry child did not confirm its initial state. Do NOT rerun blindly; query status for this execution_id first." : "Entry child reported a recorded startup failure.");
         }
         return StartResult(id, requestId, cwd, "starting", null, "Spawned detached entry child; query status/wait for the outcome.");
+    }
+
+    private static void CheckPublicationFile(string path, JsonObject expected)
+    {
+        if (File.Exists(path)) Require(FileHash(path) == Hash(Packed(expected)), "publication_file_conflict: " + path + "; preserve existing evidence.");
     }
 
     private JsonObject StartResult(string id, string requestId, string cwd, string state, JsonObject? failure, string note)

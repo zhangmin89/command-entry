@@ -47,7 +47,7 @@ never synced between machines.
 ## Retained evidence and missing history
 
 `serve_root/_claims/` holds one directory per unique content fingerprint.
-Claims, requests, execution records and logs accumulate; there is no automatic
+Claims, prepared plans, requests, execution records and logs accumulate; there is no automatic
 retention limit or general cleanup protocol. `claim_timeout_seconds` is a
 legacy template field, not proof that a claim can be released safely.
 
@@ -79,7 +79,27 @@ original evidence. Preserve all remaining files for manual recovery of the
 original request/record set. A valid recorded startup failure with no result
 is handled separately, whether or not the record directory exists. Existing
 results, including `unknown`, take precedence over startup-failure sidecars.
-There is no automatic ghost recovery or manual recovery command.
+Schema-2 prepared reservations are a narrower case: the journal proves that
+owner launch has not been authorized. The same content can complete publication
+from its hash-bound `_prepared/` plan under the original identity and resource
+limits, provided the policy and retained files agree and no execution record
+exists. A flushed `launch_committed` transition precedes owner launch. After
+that transition, or for legacy schema-1 reservations, the above blocks remain.
+There is no general ghost recovery or manual recovery command. Torn journals,
+missing or changed preparation files and conflicting publication evidence
+remain manual-recovery cases; preparations are retained even after commitment.
+
+Concurrent waits for one execution use an exclusive progress lock. A second
+server receives `wait_in_progress_retry_later` without modifying progress;
+retry observation for the same execution ID after the first wait returns.
+
+Server event appends are serialized across processes with a named Windows mutex
+derived from the canonical log root. This prevents cooperating server writers
+from losing lines to sharing conflicts. Storage/access failures remain
+best-effort and do not fail business calls; crashes or non-cooperating writers
+can still leave incomplete lines, which Metrics counts as unparsed. Logs have
+no automatic retention limit or rotation. Rejection audit receipts retain their
+separate persisted/not-persisted indication.
 
 Mutable JSON readers use read/delete sharing. The writer uses
 `SetFileInformationByHandle(FileRenameInfoEx)` with replace/POSIX flags: an
