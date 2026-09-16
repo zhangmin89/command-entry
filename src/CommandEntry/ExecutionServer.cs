@@ -12,6 +12,7 @@ internal sealed partial class ExecutionServer
     private readonly uint spawnFlags;
     private readonly bool orphanGuaranteed;
     private readonly SemaphoreSlim calls = new(1, 1);
+    private readonly PublicationIndex publications;
 
     internal ExecutionServer(string policyPath, string? bindingPath)
     {
@@ -24,6 +25,7 @@ internal sealed partial class ExecutionServer
             if (bindingPath is not null) VerifyBinding(bindingPath);
         }
         serveRoot = BusinessPaths.Resolve(policy["serve_root"].String()); Directory.CreateDirectory(serveRoot);
+        publications = new(serveRoot);
         logRoot = BusinessPaths.Resolve(policy["log_root"].Text() ?? Path.Combine(Path.GetDirectoryName(this.policyPath)!, "logs"));
         (spawnFlags, orphanGuaranteed) = OwnerLauncher.Flags();
         var missing = new JsonArray(); bool dotnet = false;
@@ -167,11 +169,11 @@ internal sealed partial class ExecutionServer
         finally { calls.Release(); }
     }
 
-    private string? ClaimIdentity(string fingerprint, string claimPath)
+    private string? ClaimIdentity(string fingerprint, string claimPath, PublicationIndex.Session index)
     {
         if (!File.Exists(claimPath))
         {
-            string? found = Find(fingerprint);
+            string? found = index.Latest(fingerprint);
             if (found is not null) Save(claimPath, new JsonObject { ["execution_id"] = found, ["healed_at_unix"] = WindowsProcess.UnixNow });
             return found;
         }
@@ -188,6 +190,8 @@ internal sealed partial class ExecutionServer
             {
                 string? found = Find(fingerprint, strict: true);
                 Require(found is not null, "claim_recovery_identity_missing"); Require(JsonFields.IsUuid(found), "claim_execution_id_required");
+                Require(index.Latest(fingerprint) is null || index.Latest(fingerprint) == found,
+                    "claim_index_mismatch: preserve evidence for manual recovery");
                 Save(claimPath, new JsonObject { ["execution_id"] = found, ["healed_at_unix"] = WindowsProcess.UnixNow });
                 return found;
             }
@@ -235,9 +239,12 @@ internal sealed partial class ExecutionServer
         catch (Exception error) when (error is IOException or UnauthorizedAccessException) { throw new InvalidRequest("claim_pending_unconfirmed_retry_later"); }
         string id, requestId, inputDirectory;
         using (mutex)
+        using (var index = publications.Open(() => History()))
         {
             string claimPath = Path.Combine(claimDirectory, "claim.json");
-            string? existing = ClaimIdentity(fingerprint, claimPath);
+            string? existing = ClaimIdentity(fingerprint, claimPath, index);
+            Require(index.Latest(fingerprint) is null || index.Latest(fingerprint) == existing,
+                "claim_index_mismatch: preserve evidence for manual recovery");
             if (existing is not null)
             {
                 Require(File.Exists(Path.Combine(serveRoot, existing, "request.json")),
@@ -256,7 +263,7 @@ internal sealed partial class ExecutionServer
                 Require(ExecutionRecords.ConfirmedTerminal.Contains(ExecutionRecords.Snapshot(Locate(previousId))["state"].String()), "previous_attempt_not_confirmed_terminal");
                 task = origin["task_ref"].String(); step = origin["step_ref"].String(); previousRequest = origin["request_id"].String(); attempt = origin["attempt"].Integer("invalid_attempt") + 1;
             }
-            else step = fingerprint[..12] + "-" + (1 + History().Count(p => p.Envelope["content_fingerprint"].Text() == fingerprint));
+            else step = fingerprint[..12] + "-" + checked(index.Count(fingerprint) + 1).ToString(System.Globalization.CultureInfo.InvariantCulture);
             var business = new JsonObject(form.Where(p => p.Key is not "workdir" and not "previous_execution").Select(p => KeyValuePair.Create(p.Key, p.Value?.Copy())));
             business["task_ref"] = task; business["step_ref"] = step; business["attempt"] = attempt; business["cwd"] = workdir;
             foreach (var option in options) business[option.Key] = option.Value?.Copy();
@@ -266,6 +273,7 @@ internal sealed partial class ExecutionServer
             Require(!Path.Exists(Path.Combine(BusinessPaths.Context(policy, cwd), id)),
                 "execution_identity_already_recorded: " + id + "; preserve existing evidence; manual recovery of the original publication is required.");
             inputDirectory = Path.Combine(serveRoot, id);
+            index.Reserve(fingerprint, id);
             if (!DirectoryCreation.TryCreateNew(inputDirectory))
             {
                 string? rival = Find(fingerprint); Require(rival is not null, "serve_dir_collision_without_match: " + inputDirectory);

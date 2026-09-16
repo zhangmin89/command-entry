@@ -37,6 +37,8 @@ internal static partial class WindowsProcess
     [LibraryImport("kernel32.dll", SetLastError = true)]
     private static partial int GetExitCodeProcess(SafeProcessHandle handle, out uint code);
     [LibraryImport("kernel32.dll", SetLastError = true)]
+    private static partial uint WaitForSingleObject(SafeProcessHandle handle, uint milliseconds);
+    [LibraryImport("kernel32.dll", SetLastError = true)]
     private static partial int TerminateProcess(SafeProcessHandle handle, uint code);
     [LibraryImport("kernel32.dll", SetLastError = true)]
     private static partial int IsProcessInJob(nint process, nint job, out int inside);
@@ -60,7 +62,7 @@ internal static partial class WindowsProcess
             ["pid"] = pid, ["alive"] = null, ["creation_time"] = null,
             ["cpu_seconds"] = null, ["exit_code"] = null, ["observed_at_unix"] = UnixNow
         };
-        using var handle = OpenProcess(0x1000, 0, pid);
+        using var handle = OpenProcess(0x00101000, 0, pid); // QUERY_LIMITED_INFORMATION | SYNCHRONIZE
         if (handle.IsInvalid)
         {
             if (Marshal.GetLastPInvokeError() == 87) result["alive"] = false;
@@ -71,11 +73,13 @@ internal static partial class WindowsProcess
             result["creation_time"] = creation;
             result["cpu_seconds"] = (kernel + user) / 10000000.0;
         }
-        if (GetExitCodeProcess(handle, out uint code) != 0)
+        uint wait = WaitForSingleObject(handle, 0);
+        if (wait == 0) // The same process handle is signaled only after termination.
         {
-            result["alive"] = code == 259;
-            if (code != 259) result["exit_code"] = code;
+            result["alive"] = false;
+            if (GetExitCodeProcess(handle, out uint code) != 0) result["exit_code"] = code;
         }
+        else if (wait == 258) result["alive"] = true; // WAIT_TIMEOUT; failures remain unknown.
         return result;
     }
 

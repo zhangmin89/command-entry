@@ -10,11 +10,15 @@ internal sealed partial class OutputCapture : IDisposable
     private readonly string? path;
     private readonly int quota;
     private readonly Decoder decoder;
+    private readonly char[] decodeBuffer;
+    private readonly StringBuilder head = new();
+    private readonly Rune[] tail = new Rune[512];
+    private int headCount, tailCount, tailStart;
     private FileStream? file;
     private long total, retained, errors, missing, lineNumber;
     private bool complete, redacted, discardLine, privateKey;
     private string? storageError;
-    private string pending = "", head = "", tail = "";
+    private string pending = "";
     private readonly List<(long Start, long End)> ranges = [];
 
     internal OutputCapture(string? path, string encoding = "utf-8", int quota = 1048576)
@@ -24,6 +28,7 @@ internal sealed partial class OutputCapture : IDisposable
         var codec = (Encoding)TextCodec.Get(encoding).Clone();
         codec.DecoderFallback = new CountingFallback(() => errors++);
         decoder = codec.GetDecoder();
+        decodeBuffer = new char[codec.GetMaxCharCount(8192)];
         if (path is not null)
             try { file = new(path, FileMode.CreateNew, FileAccess.Write, FileShare.Read); }
             catch (IOException error) { storageError = error.GetType().Name; }
@@ -65,11 +70,16 @@ internal sealed partial class OutputCapture : IDisposable
         }
         else safe = RedactLine(line);
         redacted |= safe != line;
-        head += Slice(safe, 0, Math.Max(0, 512 - Length(head)));
-        tail += safe;
-        tail = Slice(tail, Math.Max(0, Length(tail) - 512), 512);
+        Span<char> encoded = stackalloc char[2];
+        foreach (var rune in safe.EnumerateRunes())
+        {
+            if (headCount < 512) { head.Append(encoded[..rune.EncodeToUtf16(encoded)]); headCount++; }
+            if (tailCount < tail.Length) tail[(tailStart + tailCount++) % tail.Length] = rune;
+            else { tail[tailStart] = rune; tailStart = (tailStart + 1) % tail.Length; }
+        }
+        int byteCount = RecordJson.Utf8.GetByteCount(safe);
+        if (file is null || retained + byteCount > quota) { Missing(lineNumber); return; }
         byte[] bytes = RecordJson.Utf8.GetBytes(safe);
-        if (file is null || retained + bytes.Length > quota) { Missing(lineNumber); return; }
         try { file.Write(bytes); file.Flush(); retained += bytes.Length; }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
@@ -84,24 +94,33 @@ internal sealed partial class OutputCapture : IDisposable
         lock (gate)
         {
             total += bytes.Length;
-            char[] buffer = new char[bytes.Length * 2 + 4];
-            int count = decoder.GetChars(bytes, buffer, final);
-            foreach (string fragment in TextCodec.Lines(new string(buffer, 0, count)))
+            bool carryCarriageReturn = false;
+            do
             {
-                bool ended = fragment.EndsWith('\n') || fragment.EndsWith('\r');
-                if (!discardLine)
+                int take = Math.Min(bytes.Length, 8192);
+                int count = decoder.GetChars(bytes[..take], decodeBuffer, final && take == bytes.Length);
+                bytes = bytes[take..];
+                string decoded = new(decodeBuffer, 0, count);
+                if (carryCarriageReturn) decoded = "\r" + decoded;
+                carryCarriageReturn = !bytes.IsEmpty && decoded.EndsWith('\r');
+                if (carryCarriageReturn) decoded = decoded[..^1]; // Internal chunking must not split one CRLF line.
+                foreach (string fragment in TextCodec.Lines(decoded))
                 {
-                    pending += fragment;
-                    if (Length(pending) > 16384)
+                    bool ended = fragment.EndsWith('\n') || fragment.EndsWith('\r');
+                    if (!discardLine)
                     {
-                        pending = ""; discardLine = true; Missing(lineNumber + 1);
+                        pending += fragment;
+                        if (Length(pending) > 16384)
+                        {
+                            pending = ""; discardLine = true; Missing(lineNumber + 1);
+                        }
                     }
+                    if (!ended) continue;
+                    lineNumber++;
+                    if (!discardLine) Accept(pending);
+                    pending = ""; discardLine = false;
                 }
-                if (!ended) continue;
-                lineNumber++;
-                if (!discardLine) Accept(pending);
-                pending = ""; discardLine = false;
-            }
+            } while (!bytes.IsEmpty);
             if (final)
             {
                 if (pending.Length > 0 && !discardLine) { lineNumber++; Accept(pending); }
@@ -126,6 +145,11 @@ internal sealed partial class OutputCapture : IDisposable
     internal JsonObject Metadata()
     {
         lock (gate)
+        {
+            var previewTail = new StringBuilder();
+            Span<char> encoded = stackalloc char[2];
+            for (int i = 0; i < tailCount; i++)
+                previewTail.Append(encoded[..tail[(tailStart + i) % tail.Length].EncodeToUtf16(encoded)]);
             return new()
             {
                 ["captured_bytes"] = total, ["capture_complete"] = complete,
@@ -134,8 +158,9 @@ internal sealed partial class OutputCapture : IDisposable
                 ["missing_decoded_line_ranges"] = new JsonArray(ranges.Select(r => (JsonNode)new JsonArray(r.Start, r.End)).ToArray()),
                 ["decode_error_count"] = errors, ["redacted"] = redacted, ["raw_bytes_persisted"] = false,
                 ["storage_error"] = storageError, ["output_reference"] = path is null ? null : Path.GetFileName(path),
-                ["preview_head"] = head, ["preview_tail"] = tail, ["preview_complete"] = complete && total <= 512 && missing == 0
+                ["preview_head"] = head.ToString(), ["preview_tail"] = previewTail.ToString(), ["preview_complete"] = complete && total <= 512 && missing == 0
             };
+        }
     }
 
     public void Dispose() { lock (gate) { file?.Dispose(); file = null; } }

@@ -38,13 +38,15 @@ internal static partial class TestRunner
     {
         Console.OutputEncoding = Utf8;
         if (args is ["probe", .. var probe]) return await Probe(probe);
-        var options = RuntimeCommands.Options(args, "--root", "--server", "--aot");
+        var options = RuntimeCommands.Options(args, "--root", "--server", "--aot", "--case");
         Root = Path.GetFullPath(options.Required("--root"));
         Server = Path.GetFullPath(options.Required("--server"));
         Check.True(File.Exists(Server), "Build the server before running tests: " + Server);
         if (options.GetValueOrDefault("--aot") == "true") _ = RuntimeCommands.InspectAot(Server);
         var cases = Assembly.GetExecutingAssembly().GetTypes().SelectMany(type => type.GetMethods(BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic))
             .Where(method => method.IsDefined(typeof(CaseAttribute))).OrderBy(method => method.DeclaringType!.Name).ThenBy(method => method.Name).ToArray();
+        if (options.TryGetValue("--case", out string? selected))
+            cases = cases.Where(method => method.DeclaringType!.Name + "." + method.Name == selected).ToArray();
         Check.True(cases.Length > 0, "No tests discovered");
         int passed = 0, failed = 0;
         foreach (var method in cases)
@@ -71,6 +73,8 @@ internal static partial class TestRunner
     {
         switch (args[0])
         {
+            case "gated-exit": await Console.In.ReadLineAsync(); return int.Parse(args[1]);
+            case "exit": return int.Parse(args[1]);
             case "text": Console.WriteLine(args[1]); Console.Error.WriteLine(args[1]); return 0;
             case "echo":
                 using (var input = new MemoryStream())

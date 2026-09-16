@@ -17,8 +17,10 @@ internal static class Sentinel
         try
         {
             value = JsonNode.Parse(raw) as JsonObject ?? throw new JsonException("event_object_required");
-            route = value["hook_event_name"].Text() == "PreToolUse" && ShellTools.Contains(value["tool_name"].Text())
-                ? "shell_denied" : "outside_matcher";
+            string? tool = value["tool_name"].Text();
+            route = value["hook_event_name"].Text() != "PreToolUse" ? "outside_matcher"
+                : string.IsNullOrWhiteSpace(tool) ? "invalid_event_denied"
+                : ShellTools.Contains(tool) ? "shell_denied" : "outside_matcher";
         }
         catch (JsonException) { value = new(); route = "invalid_event_denied"; }
         var answer = new JsonObject();

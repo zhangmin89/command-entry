@@ -51,6 +51,24 @@ Claims, requests, execution records and logs accumulate; there is no automatic
 retention limit or general cleanup protocol. `claim_timeout_seconds` is a
 legacy template field, not proof that a claim can be released safely.
 
+`serve_root/publication-index.jsonl` is an append-only identity reservation
+journal, protected by a short global publication lock after the fingerprint
+claim lock. Each server scans legacy requests once on its first valid start,
+then keeps a fingerprint/count/latest-ID map and reads only appended journal
+entries. Cold startup remains linear in retained history; memory grows with
+distinct fingerprints, and the journal grows with reservations. There is no
+automatic compaction. Counters include retries and interrupted reservations,
+so gaps are intentional. The index is durable before request publication or
+owner launch. Missing/truncated live indexes, incomplete entries and claim/index
+disagreement reject new work rather than discarding evidence or releasing an
+unconfirmed identity. Preserve the original journal for manual recovery.
+Do not run an older writer against this directory concurrently; see deployment.
+
+Output quota limits retained disk bytes. Capture still drains and decodes the
+entire pipe, redacts lines and keeps the latest 512-rune preview after quota
+exhaustion. Reused decoder storage and a fixed tail buffer reduce allocation;
+they do not impose a total output/CPU budget independent of the run timeout.
+
 If a claim's original request is missing, startup rejects with
 `claim_publication_missing`. If history loss would derive an ID with an
 existing execution record, startup rejects with
