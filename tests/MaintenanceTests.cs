@@ -65,6 +65,25 @@ internal static class MaintenanceTests
     }
 
     [Case]
+    private static void InterpreterProgramsAreTheSingleSource()
+    {
+        using var f = new Fixture();
+        var policy = f.Policy.Copy().Object(); policy.Remove("python"); policy.Remove("powershell");
+        Check.Equal(0, PolicyMaintenance.Validate(policy).Count);
+        var template = Read(Path.Combine(TestRunner.Root, "policy.json"));
+        foreach (string name in new[] { "python", "powershell" })
+        {
+            Check.True(!template.ContainsKey(name) && !f.Policy.ContainsKey(name));
+            Check.Json(template["programs"]![name], f.Policy["programs"]![name]);
+            var bad = policy.Copy().Object(); bad["programs"]![name]!["path"] = f.FilePath("missing-" + name + ".exe");
+            Check.True(PolicyMaintenance.Validate(bad).Any(problem => problem.Text() == "program_path_missing:" + name));
+        }
+        string file = f.FilePath("programs-only.json"); WriteNew(file, policy);
+        var result = Fixture.Run(TestRunner.Server, ["validate-policy", "--policy", file]);
+        Check.Equal(0, result.Exit);
+    }
+
+    [Case]
     private static void MetricsUseEnvelopesAndCountStartupEventsHonestly()
     {
         using var f = new Fixture(); string records = f.FilePath("metric-hooks"), serve = f.FilePath("metric-serve"); Directory.CreateDirectory(records); Directory.CreateDirectory(Path.Combine(serve, "one"));
@@ -135,7 +154,7 @@ internal static class MaintenanceTests
     private static void MaintenanceCommandsNeedNoPowerShellInterpreter()
     {
         using var f = new Fixture(); string root = CopyRuntime(f, "maintenance-release"), policy = Path.Combine(root, "policy.json");
-        var definition = Read(policy); definition["powershell"] = f.FilePath("no-powershell.exe");
+        var definition = Read(policy);
         definition["programs"].Object().Remove("powershell"); Save(policy, definition);
         var build = Fixture.Run(TestRunner.Server, ["build-binding", "--runtime-root", root, "--policy", policy, "--output", f.FilePath("new-binding.json")]);
         Check.Equal(0, build.Exit); Check.Equal(FileHash(policy), Read(f.FilePath("new-binding.json"))["policy"]!["sha256"].String());
@@ -184,7 +203,7 @@ internal static class MaintenanceTests
     private static void PolicyMaintenanceNeedsNoPythonInterpreter()
     {
         using var f = new Fixture(); string root = CopyRuntime(f, "no-python"); string policy = Path.Combine(root, "policy.json");
-        var definition = Read(policy); definition["python"] = f.FilePath("no-python.exe"); definition["programs"].Object().Remove("python"); Save(policy, definition);
+        var definition = Read(policy); definition["programs"].Object().Remove("python"); Save(policy, definition);
         var update = Fixture.Run(TestRunner.Server, ["update-policy", "--repo-root", root]); Check.Equal(0, update.Exit);
         var added = Fixture.Run(TestRunner.Server, ["update-policy", "--repo-root", root, "--add-program", "another", "--program-path", TestRunner.ProbeExe, "--kind", "native"]);
         Check.Equal(0, added.Exit); Check.Equal(TestRunner.ProbeExe, Read(policy)["programs"]!["another"]!["path"].String());

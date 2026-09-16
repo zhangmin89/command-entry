@@ -8,7 +8,11 @@ waiting go through the `command_entry_exec_server` MCP tools:
 
 - `start_operation` — one business operation. Required: `operation`
   (native/script/python_unittest), `program`, `workdir`. `program` is the
-  policy KEY (`"git"`, `"node"`), never an executable path. Optional integer
+  exact policy KEY listed in this tool's `inputSchema.properties.program.enum`.
+  Use an advertised value unchanged: do not guess names, change case, add or
+  remove `.exe`, or substitute an executable path. If no matching key is
+  listed, report the missing configuration and follow Exceptions below.
+  Optional integer
   `run_seconds` (1..1800) and `output_quota_bytes` (1024..16777216 per stream)
   override installed policy defaults (deployment template: 300 seconds and
   1048576 bytes). Omit to use defaults; invalid values are rejected, not
@@ -62,7 +66,8 @@ satisfies the retry condition.
 Out-of-policy needs (missing program, unlisted path, larger budget) are
 operations events, not raw shell:
 
-1. The server returns a structured rejection naming the missing rule.
+1. Identify the missing program from the advertised enum, or the missing
+   rule from the server's structured rejection.
 2. Ask the user to evaluate it.
 3. If approved, the user runs the installed executable's `update-policy`
    command to update and re-pin the binding, then restarts the server.

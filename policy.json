@@ -1,7 +1,5 @@
 {
   "version": 2,
-  "python": "C:\\Users\\zhang\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe",
-  "powershell": "C:\\Program Files\\PowerShell\\7\\pwsh.exe",
   "record_root": ".codex-command-records",
   "serve_root": "C:\\Users\\zhang\\.codex\\command-entry\\serve-input",
   "working_roots": ["REPLACE_WITH_ACTUAL_PROJECT_ROOTS_BEFORE_DEPLOY"],
@@ -11,7 +9,7 @@
     "git": {"kind": "native", "path": "C:\\Program Files\\Git\\cmd\\git.exe"},
     "node": {"kind": "javascript", "path": "C:\\nvm4w\\nodejs\\node.exe"},
     "powershell": {"kind": "powershell", "path": "C:\\Program Files\\PowerShell\\7\\pwsh.exe"},
-    "python": {"kind": "python", "path": "C:\\Users\\zhang\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe"},
+    "python": {"kind": "python", "path": "C:\\Users\\zhang\\AppData\\Local\\Python\\bin\\python.exe"},
     "rg": {"kind": "native", "path": "C:\\Users\\zhang\\.codex\\command-entry\\rg.exe"},
     "impeccable": {"kind": "native","path": "C:\\Users\\zhang\\.impeccable\\bin\\0.1.5\\impeccable.exe"}
   },

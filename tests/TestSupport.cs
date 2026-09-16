@@ -92,8 +92,8 @@ internal sealed class Fixture : IDisposable
         {
             ["probe"] = new JsonObject { ["kind"] = "native", ["path"] = TestRunner.ProbeExe },
             ["server"] = new JsonObject { ["kind"] = "native", ["path"] = TestRunner.Server },
-            ["powershell"] = new JsonObject { ["kind"] = "powershell", ["path"] = Policy["powershell"]?.Copy() },
-            ["python"] = new JsonObject { ["kind"] = "python", ["path"] = Policy["python"]?.Copy() }
+            ["powershell"] = Policy["programs"]!["powershell"]!.Copy(),
+            ["python"] = Policy["programs"]!["python"]!.Copy()
         };
         WriteNew(PolicyPath, Policy);
         Client = new(PolicyPath);

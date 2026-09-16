@@ -93,11 +93,24 @@ Create bindings with `CommandEntry.exe build-binding --runtime-root PATH
 have been removed; update automation to call the native subcommands. Python
 and PowerShell interpreters are not needed for maintenance.
 
-Program execution uses the `programs` mappings. The top-level `python` and
-`powershell` fields remain for legacy template/test compatibility;
-`claim_timeout_seconds` and `programs.*.wait_category` are also legacy fields.
-They do not configure interpreter execution, claim expiry or active MCP wait
-behavior. Current waiting uses `wait_budget_seconds`,
+Program execution and the test fixtures use only the `programs` mappings,
+including `programs.python` and `programs.powershell`. The duplicate top-level
+`python` and `powershell` fields are no longer used or required. Remove them
+from the reviewed policy candidate when switching to this C# release, and
+re-pin the changed policy through the maintenance flow above. Preserve older
+policy snapshots with their original bytes and bindings.
+
+The MCP `tools/list` response publishes all configured program keys in
+`start_operation.inputSchema.properties.program.enum`, preserving their exact
+case and suffixes. This list comes from the same loaded policy snapshot used
+to validate starts; it does not re-read the policy file. After updating and
+re-pinning the installed policy, restart the server and refresh the client's
+tool definitions. The AGENTS template refers to this enum instead of maintaining
+a second list of keys. Server-side program validation remains authoritative.
+
+`claim_timeout_seconds` and `programs.*.wait_category` remain legacy fields.
+They do not configure claim expiry or active MCP wait behavior.
+Current waiting uses `wait_budget_seconds`,
 `wait_poll_interval_seconds` and `wait_stop_after_no_progress`.
 
 The `metrics` command reports `complete`, `hook.unparsed_records` and
@@ -112,6 +125,41 @@ stopped C# runtime processes before applying. It refuses changed claims,
 occupied destinations, unexpected record contents and invalid bindings.
 Its three reviewed records are moved intact with a manifest; it is not a
 general record-cleanup command.
+
+## Rejected-call audit
+
+Handled tool-call failures at the execution-server boundary are recorded in
+`<log_root>/rejections/<audit_id>.json`. The default `log_root` is `logs` beside
+the policy. This includes validation failures before an execution ID or request
+directory exists. Each refusal gets a new audit ID; it is not an execution ID
+and cannot be passed to `status`, `output` or `cancel`.
+
+The MCP error retains its original `error` and `reason`, and adds
+`rejection_audit` with `audit_id`, `recorded` and, on success, `record_file`.
+The record is flushed and published before `recorded: true` is returned.
+If writing fails, `recorded: false` and a classified `storage_error` explicitly
+report the gap; the original refusal remains unchanged. The existing
+`server-events.jsonl` also receives the audit ID, context and `audit_recorded`,
+but that shared event log remains best effort.
+
+Each record includes the time, tool, error category, reason and allowlisted
+context. Starts retain `operation`, `program`, `workdir`, `language`, `script`
+and `previous_execution` when supplied. Other tools retain `execution_id` and
+`file` when supplied. Missing fields stay absent; null and non-string values
+are represented by their JSON type, without their contents. String metadata
+uses the existing credential redaction rules, suppresses private-key fields
+and is limited to 1024 Unicode scalars per field. `redacted_fields` and
+`truncated_fields` identify changes. Arguments, stdin, parameter-file contents,
+script contents and unknown request fields are not copied into this audit.
+It is diagnostic metadata, not a replayable copy of the request.
+
+To investigate `program_not_configured`, find the returned audit ID or filter
+the rejection records by `reason`, then inspect `context.program` and
+`context.workdir`. Preserve these records with the event log. They have no
+automatic retention or cleanup. Failures before dispatch, such as malformed
+MCP protocol messages or server startup failures, are outside this audit;
+rejections after execution publication continue to use the execution record.
+The change does not reconstruct older refusals whose metadata was never saved.
 
 ## Rollback and retained evidence
 

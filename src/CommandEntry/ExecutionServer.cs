@@ -14,6 +14,8 @@ internal sealed partial class ExecutionServer
     private readonly SemaphoreSlim calls = new(1, 1);
     private readonly PublicationIndex publications;
 
+    internal string[] ProgramKeys => policy.ObjectOrEmpty("programs").Select(pair => pair.Key).Order(StringComparer.Ordinal).ToArray();
+
     internal ExecutionServer(string policyPath, string? bindingPath)
     {
         this.policyPath = BusinessPaths.Resolve(policyPath, "file");
@@ -162,8 +164,7 @@ internal sealed partial class ExecutionServer
         }
         catch (Exception error) when (ExecutionRecords.Handled(error))
         {
-            Log("rejected", new() { ["tool"] = name, ["error_kind"] = ExecutionRecords.ErrorKind(error),
-                ["reason"] = error is InvalidRequest ? error.Message.Split(':')[0][..Math.Min(80, error.Message.Split(':')[0].Length)] : ExecutionRecords.ErrorKind(error) });
+            Log("rejected", RejectionAudit.Record(logRoot, name, form, error));
             throw;
         }
         finally { calls.Release(); }

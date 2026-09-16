@@ -16,7 +16,7 @@ internal static class PolicyMaintenance
             catch (InvalidRequest) { return false; }
         }
         Need(policy["version"]?.ToJsonString() == "2", "version must be 2");
-        foreach (string key in new[] { "python", "powershell", "record_root", "serve_root", "working_roots" })
+        foreach (string key in new[] { "record_root", "serve_root", "working_roots" })
             Need(key == "working_roots" ? policy[key] is JsonArray { Count: > 0 } : policy[key].Text() is not null, key + "_required");
         Need(policy["programs"] is JsonObject { Count: > 0 }, "programs_required");
         if (policy["programs"] is JsonObject programs)
