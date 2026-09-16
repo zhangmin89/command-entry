@@ -105,6 +105,12 @@ internal static class MaintenanceTests
         using var f = new Fixture(); string output = f.FilePath("binding.json"), root = Path.GetDirectoryName(TestRunner.Server)!;
         string[] args = ["build-binding", "--runtime-root", root, "--policy", f.PolicyPath, "--output", output];
         var built = Fixture.Run(TestRunner.Server, args); Check.Equal(0, built.Exit); Check.Equal((long)PolicyMaintenance.RuntimeNames(root).Length, JsonNode.Parse(built.Out)!["files"].Integer("count"));
+        string[] expected = File.Exists(Path.Combine(root, "CommandEntry.dll"))
+            ? ["CommandEntry.exe", "CommandEntry.dll", "CommandEntry.deps.json", "CommandEntry.runtimeconfig.json",
+                "CommandEntry.Common.dll", "CommandEntry.Server.dll", "CommandEntry.Owner.dll", "CommandEntry.Worker.dll"]
+            : ["CommandEntry.exe"];
+        var names = Read(output)["runtime_files"].Array().Select(item => Path.GetFileName(item!["path"].String()));
+        Check.Equal(string.Join(",", expected.Order()), string.Join(",", names.Order()));
         byte[] before = File.ReadAllBytes(output); using var bound = new McpClient(f.PolicyPath, output); Check.Equal(6, bound.Rpc("tools/list", new())["tools"].Array().Count);
         var again = Fixture.Run(TestRunner.Server, args); Check.Equal(125, again.Exit); Check.Contains("Refusing to overwrite an existing binding", again.Error); Check.True(File.ReadAllBytes(output).AsSpan().SequenceEqual(before));
     }
@@ -126,8 +132,12 @@ internal static class MaintenanceTests
             var binding = original.Copy().Object(); binding["runtime_files"] = alternative; string path = f.FilePath("invalid-" + index++ + ".json"); WriteNew(path, binding);
             var result = Fixture.Run(TestRunner.Server, ["--policy", f.PolicyPath, "--binding", path]); Check.Equal(125, result.Exit); Check.Contains("runtime_binding_missing_", result.Error);
         }
-        var tampered = original.Copy().Object(); tampered["runtime_files"]![0]!["sha256"] = new string('0', 64); string tamper = f.FilePath("tampered.json"); WriteNew(tamper, tampered);
-        var badHash = Fixture.Run(TestRunner.Server, ["--policy", f.PolicyPath, "--binding", tamper]); Check.Equal(125, badHash.Exit); Check.Contains("runtime_changed_since_review", badHash.Error);
+        for (int i = 0; i < items.Count; i++)
+        {
+            var tampered = original.Copy().Object(); tampered["runtime_files"]![i]!["sha256"] = new string('0', 64); string tamper = f.FilePath("tampered-" + i + ".json"); WriteNew(tamper, tampered);
+            var badHash = Fixture.Run(TestRunner.Server, ["--policy", f.PolicyPath, "--binding", tamper]); Check.Equal(125, badHash.Exit);
+            Check.Contains("runtime_changed_since_review_" + Path.GetFileName(items[i]!["path"].String()), badHash.Error);
+        }
         foreach (var item in items) item!["path"] = Path.GetDirectoryName(item["path"].String())!.ToUpperInvariant() + "\\.\\" + Path.GetFileName(item["path"].String()).ToUpperInvariant();
         string alias = f.FilePath("alias.json"); WriteNew(alias, original); using var valid = new McpClient(f.PolicyPath, alias); Check.Equal(6, valid.Rpc("tools/list", new())["tools"].Array().Count);
     }

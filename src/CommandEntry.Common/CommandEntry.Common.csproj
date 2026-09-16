@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+    <PropertyGroup>
+        <TargetFramework>net10.0-windows</TargetFramework>
+        <IsAotCompatible>true</IsAotCompatible>
+        <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    </PropertyGroup>
+    <ItemGroup>
+        <InternalsVisibleTo Include="CommandEntry" />
+        <InternalsVisibleTo Include="CommandEntry.Server" />
+        <InternalsVisibleTo Include="CommandEntry.Owner" />
+        <InternalsVisibleTo Include="CommandEntry.Worker" />
+        <InternalsVisibleTo Include="CommandEntry.Tests" />
+    </ItemGroup>
+</Project>

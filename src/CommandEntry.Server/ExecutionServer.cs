@@ -59,9 +59,7 @@ internal sealed partial class ExecutionServer
             Require(locks.Bindings[file].Text() == item["sha256"].Text(), "runtime_changed_since_review_" + Path.GetFileName(file));
             verified.Add(file);
         }
-        string[] names = ["CommandEntry.exe"];
-        if (typeof(ExecutionServer).Assembly.Location.Length > 0)
-            names = [.. names, "CommandEntry.dll", "CommandEntry.deps.json", "CommandEntry.runtimeconfig.json"];
+        string[] names = PolicyMaintenance.RuntimeNames(typeof(ExecutionServer).Assembly.Location.Length > 0);
         foreach (string file in names.Select(name => Path.Combine(AppContext.BaseDirectory, name))
             .Append(Environment.ProcessPath ?? throw new InvalidRequest("process_path_unavailable")))
             Require(verified.Contains(BusinessPaths.Resolve(file, "file")), "runtime_binding_missing_" + Path.GetFileName(file));

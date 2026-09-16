@@ -6,12 +6,30 @@ The stdio MCP transport uses the official ModelContextProtocol.Core SDK
 
 ## Layout
 
-- `src/CommandEntry/` — MCP server, detached owner/worker, policy checks,
-  process identity, output retention, text reads, sentinel and maintenance.
+- `src/CommandEntry/` — executable project containing only `Program.cs` for entry dispatch.
+- `src/CommandEntry.Server/` — MCP server, queries, owner launch, text reads,
+  sentinel, policy maintenance and metrics.
+- `src/CommandEntry.Owner/` — task validation, Job ownership, output capture,
+  timeout, cleanup and result publication.
+- `src/CommandEntry.Worker/` — Job handshake, business-process launch, stdin
+  forwarding and exit-code propagation.
+- `src/CommandEntry.Common/` — shared records, paths, file bindings, output
+  handling, PowerShell adapter and Windows process primitives.
 - `tests/` — C# executable regression suite and fixed JSON reference data.
-- `PowerShellAdapter.cs` — fixed PowerShell invocation adapter embedded in the executable.
 - Maintenance runs directly through the executable's C# subcommands.
 - `policy.json` — deployment template; review its paths before use.
+
+The executable references all four class libraries. Server, Owner and Worker
+reference Common without referencing each other. Existing types retain the
+`CommandEntry` namespace and internal visibility; friend assemblies permit
+the entry point, consuming modules and regression tests to use them.
+
+Server, Owner and Worker remain separate processes started from the same
+`CommandEntry.exe`. Owner still assigns Worker to its Job before the handshake
+allows Worker to start business work. Managed builds include four module DLLs;
+Native AOT compiles their referenced code into the single executable. Managed
+runtime bindings cover all four module DLLs as well as the entry assembly,
+apphost, deps and runtimeconfig files.
 
 Project implementation, test assertions, policy validation, binding generation
 and metrics no longer depend on Python source files. User Python work remains

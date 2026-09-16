@@ -3,14 +3,15 @@
         <OutputType>Exe</OutputType>
         <TargetFramework>net10.0-windows</TargetFramework>
         <RuntimeIdentifier>win-x64</RuntimeIdentifier>
-        <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
         <IsAotCompatible>true</IsAotCompatible>
         <JsonSerializerIsReflectionEnabledByDefault>false</JsonSerializerIsReflectionEnabledByDefault>
         <PublishAot>true</PublishAot>
         <VerifyReferenceAotCompatibility>true</VerifyReferenceAotCompatibility>
     </PropertyGroup>
     <ItemGroup>
-        <PackageReference Include="ModelContextProtocol.Core" />
-        <InternalsVisibleTo Include="CommandEntry.Tests" />
+        <ProjectReference Include="../CommandEntry.Common/CommandEntry.Common.csproj" />
+        <ProjectReference Include="../CommandEntry.Server/CommandEntry.Server.csproj" />
+        <ProjectReference Include="../CommandEntry.Owner/CommandEntry.Owner.csproj" />
+        <ProjectReference Include="../CommandEntry.Worker/CommandEntry.Worker.csproj" />
     </ItemGroup>
 </Project>

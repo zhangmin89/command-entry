@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+    <PropertyGroup>
+        <TargetFramework>net10.0-windows</TargetFramework>
+        <IsAotCompatible>true</IsAotCompatible>
+        <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+        <DisableRuntimeMarshalling>true</DisableRuntimeMarshalling>
+    </PropertyGroup>
+    <ItemGroup>
+        <ProjectReference Include="../CommandEntry.Common/CommandEntry.Common.csproj" />
+        <PackageReference Include="ModelContextProtocol.Core" />
+        <InternalsVisibleTo Include="CommandEntry" />
+        <InternalsVisibleTo Include="CommandEntry.Tests" />
+    </ItemGroup>
+</Project>

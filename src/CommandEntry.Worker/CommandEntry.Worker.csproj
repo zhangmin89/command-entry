@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+    <PropertyGroup>
+        <TargetFramework>net10.0-windows</TargetFramework>
+        <IsAotCompatible>true</IsAotCompatible>
+    </PropertyGroup>
+    <ItemGroup>
+        <ProjectReference Include="../CommandEntry.Common/CommandEntry.Common.csproj" />
+        <InternalsVisibleTo Include="CommandEntry" />
+        <InternalsVisibleTo Include="CommandEntry.Tests" />
+    </ItemGroup>
+</Project>

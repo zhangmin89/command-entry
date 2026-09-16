@@ -16,7 +16,7 @@ internal static class Program
         {
             int? maintenance = await RuntimeCommands.Run(args);
             if (maintenance is not null) return maintenance.Value;
-            if (args is ["worker"]) return await ExecutionOwner.Worker();
+            if (args is ["worker"]) return await ExecutionWorker.Run();
             if (args is ["location"]) { Write(ExecutionOwner.Location()); return 0; }
             if (args is ["serve", "--record-dir", var directory]) return await ExecutionOwner.Serve(directory);
             if (args is ["run", "--request", var request, "--policy", var policy])

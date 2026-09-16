@@ -6,6 +6,13 @@ The server, owner, worker, sentinel, policy maintenance and metrics are C#.
 Old Python implementations and unittest modules have been replaced. Tests
 execute the real MCP protocol and processes through a C# runner.
 
+`CommandEntry` contains only `Program.cs` and references the Server, Owner,
+Worker and Common class libraries. Each role library references only Common;
+maintenance commands belong to Server. The three process roles still launch
+the same executable and retain their existing arguments, environment handoff,
+Job handshake and execution records. The class-library split does not merge
+their processes. Native AOT compiles the libraries into the executable.
+
 The native executable continues to launch configured interpreters with
 `Process.Start`; no PowerShell SDK is referenced by the runtime or tests.
 The PowerShell invocation adapter is a fixed C# string constant, executed by that
@@ -149,7 +156,10 @@ CommandEntry.exe inspect-aot --executable <absolute-published-executable>
 The native runtime consists of `CommandEntry.exe`; keep `CommandEntry.pdb`
 for diagnosis. There are no published PowerShell adapter or maintenance files.
 Bindings cover the executable, including its embedded adapter constants. Managed development
-bindings additionally cover the application DLL, deps and runtimeconfig files.
+bindings additionally cover the application DLL, deps and runtimeconfig files,
+plus `CommandEntry.Common.dll`, `CommandEntry.Server.dll`,
+`CommandEntry.Owner.dll` and `CommandEntry.Worker.dll`. Binding checks require
+every module and reject a changed hash for any member.
 Binding generation holds read handles through hashing and writing; it checks
 the written artifact and refuses to overwrite an existing output file.
 

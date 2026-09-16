@@ -6,6 +6,6 @@
         <CentralPackageVersionOverrideEnabled>false</CentralPackageVersionOverrideEnabled>
     </PropertyGroup>
     <ItemGroup>
-        <PackageReference Include="ModelContextProtocol.Core" Version="2.2.0" />
+        <PackageVersion Include="ModelContextProtocol.Core" Version="2.2.0" />
     </ItemGroup>
 </Project>

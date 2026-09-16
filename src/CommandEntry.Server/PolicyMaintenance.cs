@@ -50,8 +50,11 @@ internal static class PolicyMaintenance
         return problems;
     }
 
-    internal static string[] RuntimeNames(string root) => File.Exists(Path.Combine(root, "CommandEntry.dll"))
-        ? ["CommandEntry.exe", "CommandEntry.dll", "CommandEntry.deps.json", "CommandEntry.runtimeconfig.json"]
+    internal static string[] RuntimeNames(string root) => RuntimeNames(File.Exists(Path.Combine(root, "CommandEntry.dll")));
+
+    internal static string[] RuntimeNames(bool managed) => managed
+        ? ["CommandEntry.exe", "CommandEntry.dll", "CommandEntry.deps.json", "CommandEntry.runtimeconfig.json",
+            "CommandEntry.Common.dll", "CommandEntry.Server.dll", "CommandEntry.Owner.dll", "CommandEntry.Worker.dll"]
         : ["CommandEntry.exe"];
 
     internal static JsonObject BuildBinding(string runtimeRoot, string policyPath, string outputPath)

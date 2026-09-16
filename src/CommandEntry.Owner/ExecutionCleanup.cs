@@ -42,9 +42,3 @@ internal static class ExecutionCleanup
             ExceptionDispatchInfo.Capture(cleanupFailure).Throw();
     }
 }
-
-internal sealed class ExecutionPersistenceFailure(JsonObject detail, Exception inner)
-    : IOException("execution_state_persistence_failed", inner)
-{
-    internal JsonObject Detail { get; } = detail;
-}

@@ -7,7 +7,11 @@
     <PublishAot>false</PublishAot>
   </PropertyGroup>
   <ItemGroup>
-    <ProjectReference Include="../src/CommandEntry/CommandEntry.csproj" />
+    <ProjectReference Include="../src/CommandEntry/CommandEntry.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="../src/CommandEntry.Common/CommandEntry.Common.csproj" />
+    <ProjectReference Include="../src/CommandEntry.Server/CommandEntry.Server.csproj" />
+    <ProjectReference Include="../src/CommandEntry.Owner/CommandEntry.Owner.csproj" />
+    <ProjectReference Include="../src/CommandEntry.Worker/CommandEntry.Worker.csproj" />
     <Content Include="Fixtures/reference.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>
