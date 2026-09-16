@@ -15,7 +15,7 @@ internal static class PolicyMaintenance
             try { long number = value.Integer("integer_required"); return number >= low && number <= high; }
             catch (InvalidRequest) { return false; }
         }
-        Need(policy["version"]?.ToJsonString() == "2", "version must be 2");
+        Need(policy["version"]?.ToJsonString() == "3", "version must be 3");
         foreach (string key in new[] { "record_root", "serve_root", "working_roots" })
             Need(key == "working_roots" ? policy[key] is JsonArray { Count: > 0 } : policy[key].Text() is not null, key + "_required");
         Need(policy["programs"] is JsonObject { Count: > 0 }, "programs_required");

@@ -4,11 +4,12 @@ using static CommandEntry.RecordJson;
 
 namespace CommandEntry.Tests;
 
-internal static class GapRegressionTests
+[Trait("Suite", "Regression")]
+public sealed class GapRegressionTests
 {
     private static string NewDirectory()
     {
-        string path = Path.Combine(TestRunner.Root, ".codex-command-records", "csharp-gap-" + Guid.NewGuid());
+        string path = Path.Combine(TestEnvironment.Root, ".codex-command-records", "csharp-gap-" + Guid.NewGuid());
         Directory.CreateDirectory(path);
         return path; // Synthetic evidence is retained, including pre-damage copies.
     }
@@ -27,48 +28,48 @@ internal static class GapRegressionTests
         Append(root, Entry(1)); Append(root, Entry(2));
         var index = new PublicationIndex(root);
         using var session = index.Open(EmptyHistory);
-        Check.Equal(2L, session.Count(Fingerprint));
+        Assert.Equal(2L, session.Count(Fingerprint));
         return index;
     }
     private static void RejectedUnchanged(PublicationIndex index, string root, string reason)
     {
         string hash = FileHash(Journal(root));
-        Check.Throws<InvalidRequest>(() => { using var session = index.Open(EmptyHistory); }, reason);
-        Check.Equal(hash, FileHash(Journal(root)));
+        TestAssert.Throws<InvalidRequest>(() => { using var session = index.Open(EmptyHistory); }, reason);
+        Assert.Equal(hash, FileHash(Journal(root)));
     }
 
-    [Case]
-    internal static void IndexMissingAfterLoadDoesNotRecreateEvidence()
+    [Fact, Trait("Category", "Integration")]
+    public void IndexMissingAfterLoadDoesNotRecreateEvidence()
     {
         foreach (bool populated in new[] { false, true })
         {
             string root = NewDirectory();
             var index = populated ? Seed(root) : new PublicationIndex(root);
-            using (var session = index.Open(EmptyHistory)) Check.Equal(populated ? 2L : 0L, session.Count(Fingerprint));
+            using (var session = index.Open(EmptyHistory)) Assert.Equal(populated ? 2L : 0L, session.Count(Fingerprint));
             string original = Journal(root) + ".original", hash = FileHash(Journal(root));
             File.Move(Journal(root), original);
-            Check.Throws<InvalidRequest>(() => { using var session = index.Open(EmptyHistory); }, "publication_index_missing");
-            Check.True(!Path.Exists(Journal(root)), "Missing live index must not be recreated");
-            Check.Equal(hash, FileHash(original));
+            TestAssert.Throws<InvalidRequest>(() => { using var session = index.Open(EmptyHistory); }, "publication_index_missing");
+            Assert.False(Path.Exists(Journal(root)), "Missing live index must not be recreated");
+            Assert.Equal(hash, FileHash(original));
         }
     }
 
-    [Case]
-    internal static void IndexTruncatedAtCompleteRecordIsRejected()
+    [Fact, Trait("Category", "Integration")]
+    public void IndexTruncatedAtCompleteRecordIsRejected()
     {
         string root = NewDirectory(); var index = Seed(root);
         string journal = Journal(root), original = journal + ".original";
         File.Copy(journal, original);
         byte[] bytes = File.ReadAllBytes(original);
         int firstRecord = Array.IndexOf(bytes, (byte)'\n') + 1;
-        Check.True(firstRecord > 0 && firstRecord < bytes.Length);
+        Assert.True(firstRecord > 0 && firstRecord < bytes.Length);
         File.WriteAllBytes(journal, bytes[..firstRecord]);
         RejectedUnchanged(index, root, "publication_index_truncated");
-        Check.True(File.ReadAllBytes(original).AsSpan().SequenceEqual(bytes));
+        Assert.True(File.ReadAllBytes(original).AsSpan().SequenceEqual(bytes));
     }
 
-    [Case]
-    internal static void IndexCountMustIncreaseAcrossCachedAndNewEntries()
+    [Fact, Trait("Category", "Integration")]
+    public void IndexCountMustIncreaseAcrossCachedAndNewEntries()
     {
         foreach (long count in new[] { 2L, 1L })
         {
@@ -80,12 +81,12 @@ internal static class GapRegressionTests
         string validRoot = NewDirectory(); var valid = Seed(validRoot); var next = Entry(3);
         Append(validRoot, next);
         using var session = valid.Open(EmptyHistory);
-        Check.Equal(3L, session.Count(Fingerprint));
-        Check.Equal(next["execution_id"].Text(), session.Latest(Fingerprint));
+        Assert.Equal(3L, session.Count(Fingerprint));
+        Assert.Equal(next["execution_id"].Text(), session.Latest(Fingerprint));
     }
 
-    [Case]
-    internal static void IndexUnsupportedVersionIsRejected()
+    [Fact, Trait("Category", "Integration")]
+    public void IndexUnsupportedVersionIsRejected()
     {
         string root = NewDirectory(); var index = Seed(root);
         var entry = Entry(3); entry["schema_version"] = 2; Append(root, entry);
@@ -93,8 +94,8 @@ internal static class GapRegressionTests
         RejectedUnchanged(new PublicationIndex(root), root, "publication_index_version_required");
     }
 
-    [Case]
-    internal static void IndexInvalidIdentityAndCountsAreRejected()
+    [Fact, Trait("Category", "Integration")]
+    public void IndexInvalidIdentityAndCountsAreRejected()
     {
         foreach (var (field, value) in new (string, JsonNode)[]
         {
@@ -112,8 +113,8 @@ internal static class GapRegressionTests
         }
     }
 
-    [Case]
-    internal static void OversizedLineIsDiscardedAndNextLineSurvives()
+    [Fact, Trait("Category", "Integration")]
+    public void OversizedLineIsDiscardedAndNextLineSurvives()
     {
         foreach (bool fragmented in new[] { false, true })
         {
@@ -123,22 +124,22 @@ internal static class GapRegressionTests
             {
                 capture.Feed(Utf8.GetBytes(new string('x', 16384)));
                 capture.Feed(Utf8.GetBytes("x"));
-                Check.Equal(1L, capture.Metadata()["missing_lines"]!.GetValue<long>());
+                Assert.Equal(1L, capture.Metadata()["missing_lines"]!.GetValue<long>());
                 for (int i = 0; i < 10; i++) capture.Feed(Utf8.GetBytes(new string('x', 8192)));
                 capture.Feed(Utf8.GetBytes("\nok\n"), final: true);
             }
             else capture.Feed(Utf8.GetBytes(new string('x', 20000) + "\nok\n"), final: true);
             var metadata = capture.Metadata();
-            Check.True(File.ReadAllText(path, Utf8) == "ok\n", "Oversized line must be discarded; retain only the next line");
-            Check.Equal("ok\n", metadata["preview_head"].Text());
-            Check.Equal("ok\n", metadata["preview_tail"].Text());
-            Check.Equal(1L, metadata["missing_lines"]!.GetValue<long>());
-            Check.Json(new JsonArray(new JsonArray(1, 1)), metadata["missing_decoded_line_ranges"]);
+            Assert.True(File.ReadAllText(path, Utf8) == "ok\n", "Oversized line must be discarded; retain only the next line");
+            Assert.Equal("ok\n", metadata["preview_head"].Text());
+            Assert.Equal("ok\n", metadata["preview_tail"].Text());
+            Assert.Equal(1L, metadata["missing_lines"]!.GetValue<long>());
+            JsonAssert.Equal(new JsonArray(new JsonArray(1, 1)), metadata["missing_decoded_line_ranges"]);
         }
     }
 
-    [Case]
-    internal static void LineLimitCountsRunesIncludingLineEnding()
+    [Fact, Trait("Category", "Integration")]
+    public void LineLimitCountsRunesIncludingLineEnding()
     {
         foreach (bool newline in new[] { false, true })
         foreach (int length in new[] { 16383, 16384, 16385 })
@@ -148,16 +149,16 @@ internal static class GapRegressionTests
             using var capture = new OutputCapture(path);
             capture.Feed(Utf8.GetBytes(text), final: true);
             bool retained = length <= 16384;
-            Check.True(File.ReadAllText(path, Utf8) == (retained ? text : ""),
+            Assert.True(File.ReadAllText(path, Utf8) == (retained ? text : ""),
                 $"Line limit mismatch: runes={length}, newline={newline}, expectedRetained={retained}");
             var metadata = capture.Metadata();
-            Check.Equal(retained ? 0L : 1L, metadata["missing_lines"]!.GetValue<long>());
-            Check.Equal(retained ? string.Concat(Enumerable.Repeat("😀", 512)) : "", metadata["preview_head"].Text());
+            Assert.Equal(retained ? 0L : 1L, metadata["missing_lines"]!.GetValue<long>());
+            Assert.Equal(retained ? string.Concat(Enumerable.Repeat("😀", 512)) : "", metadata["preview_head"].Text());
         }
     }
 
-    [Case]
-    internal static void InvalidUtf8IsReportedAndReplaced()
+    [Fact, Trait("Category", "Integration")]
+    public void InvalidUtf8IsReportedAndReplaced()
     {
         foreach (byte[] bytes in new[] { new byte[] { 0x41, 0xff, 0xfe, 0x42, 0x0a }, new byte[] { 0x41, 0xf0, 0x9f } })
         {
@@ -166,29 +167,29 @@ internal static class GapRegressionTests
             capture.Feed(bytes);
             capture.Feed([], final: true);
             string expected = bytes.Length == 5 ? "A\ufffd\ufffdB\n" : "A\ufffd";
-            Check.Equal(expected, File.ReadAllText(path, Utf8));
+            Assert.Equal(expected, File.ReadAllText(path, Utf8));
             var metadata = capture.Metadata();
-            Check.True(metadata["decode_error_count"]!.GetValue<long>() > 0);
-            Check.Equal(true, metadata["decoding_loss"]!.GetValue<bool>());
-            Check.Equal(expected, metadata["preview_tail"].Text());
+            Assert.True(metadata["decode_error_count"]!.GetValue<long>() > 0);
+            Assert.True(metadata["decoding_loss"]!.GetValue<bool>());
+            Assert.Equal(expected, metadata["preview_tail"].Text());
         }
     }
 
-    [Case]
-    internal static void AstralCharacterCrossesInternalByteBoundary()
+    [Fact, Trait("Category", "Integration")]
+    public void AstralCharacterCrossesInternalByteBoundary()
     {
         string path = Path.Combine(NewDirectory(), "output.txt"), text = new string('x', 8190) + "😀";
         using var capture = new OutputCapture(path);
         capture.Feed(Utf8.GetBytes(text), final: true);
         var metadata = capture.Metadata();
-        Check.Equal(text, File.ReadAllText(path, Utf8));
-        Check.Equal(new string('x', 511) + "😀", metadata["preview_tail"].Text());
-        Check.Equal(0L, metadata["decode_error_count"]!.GetValue<long>());
-        Check.Equal(false, metadata["decoding_loss"]!.GetValue<bool>());
+        Assert.Equal(text, File.ReadAllText(path, Utf8));
+        Assert.Equal(new string('x', 511) + "😀", metadata["preview_tail"].Text());
+        Assert.Equal(0L, metadata["decode_error_count"]!.GetValue<long>());
+        Assert.False(metadata["decoding_loss"]!.GetValue<bool>());
     }
 
-    [Case]
-    internal static void PreviewCompletenessRequiresFinalWithinByteLimitWithoutMissing()
+    [Fact, Trait("Category", "Integration")]
+    public void PreviewCompletenessRequiresFinalWithinByteLimitWithoutMissing()
     {
         foreach (var (text, final, quota, expected) in new[]
         {
@@ -202,20 +203,20 @@ internal static class GapRegressionTests
             using var capture = new OutputCapture(path, quota: quota);
             capture.Feed(Utf8.GetBytes(text), final: final);
             var metadata = capture.Metadata();
-            Check.Equal(final, metadata["capture_complete"]!.GetValue<bool>());
-            Check.Equal(quota == 1 ? 1L : 0L, metadata["missing_lines"]!.GetValue<long>());
-            Check.Equal(expected, metadata["preview_complete"]!.GetValue<bool>());
+            Assert.Equal(final, metadata["capture_complete"]!.GetValue<bool>());
+            Assert.Equal(quota == 1 ? 1L : 0L, metadata["missing_lines"]!.GetValue<long>());
+            Assert.Equal(expected, metadata["preview_complete"]!.GetValue<bool>());
         }
     }
 
-    [Case]
-    internal static void OpenProcessInvalidParameterMapsToDeadWithoutIdentity()
+    [Fact, Trait("Category", "Integration")]
+    public void OpenProcessInvalidParameterMapsToDeadWithoutIdentity()
     {
         // PID 0 deterministically produces ERROR_INVALID_PARAMETER; this tests the
         // error mapping, not the lifecycle of a real terminated business process.
         var observation = WindowsProcess.Observe(0);
-        Check.Equal(false, observation["alive"]!.GetValue<bool>());
-        Check.True(observation["creation_time"] is null);
-        Check.True(observation["exit_code"] is null);
+        Assert.False(observation["alive"]!.GetValue<bool>());
+        Assert.Null(observation["creation_time"]);
+        Assert.Null(observation["exit_code"]);
     }
 }

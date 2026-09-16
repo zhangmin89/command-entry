@@ -5,4 +5,5 @@
   <Project Path="src/CommandEntry.Owner/CommandEntry.Owner.csproj" />
   <Project Path="src/CommandEntry.Worker/CommandEntry.Worker.csproj" />
   <Project Path="tests/CommandEntry.Tests.csproj" />
+  <Project Path="tests/CommandEntry.TestProbe/CommandEntry.TestProbe.csproj" />
 </Solution>

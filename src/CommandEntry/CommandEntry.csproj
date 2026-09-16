@@ -9,7 +9,6 @@
         <VerifyReferenceAotCompatibility>true</VerifyReferenceAotCompatibility>
     </PropertyGroup>
     <ItemGroup>
-        <ProjectReference Include="../CommandEntry.Common/CommandEntry.Common.csproj" />
         <ProjectReference Include="../CommandEntry.Server/CommandEntry.Server.csproj" />
         <ProjectReference Include="../CommandEntry.Owner/CommandEntry.Owner.csproj" />
         <ProjectReference Include="../CommandEntry.Worker/CommandEntry.Worker.csproj" />

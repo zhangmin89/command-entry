@@ -1,5 +1,5 @@
 {
-  "version": 2,
+  "version": 3,
   "record_root": ".codex-command-records",
   "serve_root": "C:\\Users\\zhang\\.codex\\command-entry\\serve-input",
   "working_roots": ["REPLACE_WITH_ACTUAL_PROJECT_ROOTS_BEFORE_DEPLOY"],

@@ -15,7 +15,7 @@ The stdio MCP transport uses the official ModelContextProtocol.Core SDK
   forwarding and exit-code propagation.
 - `src/CommandEntry.Common/` — shared records, paths, file bindings, output
   handling, PowerShell adapter and Windows process primitives.
-- `tests/` — C# executable regression suite and fixed JSON reference data.
+- `tests/` — xUnit unit, integration and regression tests, fixed reference data and an independent subprocess probe.
 - Maintenance runs directly through the executable's C# subcommands.
 - `policy.json` — deployment template; review its paths before use.
 
@@ -58,21 +58,19 @@ path, file-binding, parameter and retry validation remain in place.
 ## Build and test
 
 Run through the approved command-entry MCP tools, using the native `dotnet`
-policy key. Replace `<repo-root>` with the absolute repository directory.
+policy key. The test project uses xUnit.net v3 and Microsoft Testing Platform.
 
 ~~~text
-dotnet build tests/CommandEntry.Tests.csproj --configuration Release --verbosity minimal
-dotnet tests/bin/Release/net10.0-windows/win-x64/CommandEntry.Tests.dll --root <repo-root> --server <repo-root>/src/CommandEntry/bin/Release/net10.0-windows/win-x64/CommandEntry.exe
+dotnet test --project tests/CommandEntry.Tests.csproj --configuration Release
 ~~~
 
-The dependency-free executable runner reports every test group, continues to
-the remaining groups after a failure, and returns a nonzero exit code if any
-group failed. Building the project
-does not execute its tests. Full script-contract tests also require the
-PowerShell, Node and Python interpreters configured in the template.
+[Test suites and automation](docs/testing.md) documents category filters,
+TRX reports, interpreter prerequisites and `scripts/test.ps1`.
+The automated Managed run covers unit and integration tests; the NativeAot
+run publishes, inspects the PE artifact and reruns integration tests.
+GitHub Actions runs both modes on Windows.
 
-Native publishing, artifact checks and the same suite against Native AOT:
-[C# migration and verification](docs/csharp-migration.md).
+Implementation details: [C# migration](docs/csharp-migration.md).
 Deployment remains a separate user operation: [deployment](docs/deployment.md).
 
 ## Execution contract

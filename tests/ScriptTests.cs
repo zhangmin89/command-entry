@@ -4,17 +4,18 @@ using static CommandEntry.RecordJson;
 
 namespace CommandEntry.Tests;
 
-internal static class ScriptTests
+public sealed class ScriptTests
 {
-    [Case]
-    private static void ExternalInterpretersPreserveProcessContract()
+    [Theory, Trait("Category", "Integration")]
+    [InlineData("powershell")]
+    [InlineData("javascript")]
+    [InlineData("python")]
+    public void ExternalInterpretersPreserveProcessContract(string language)
     {
-        foreach (string language in new[] { "powershell", "javascript", "python" })
-        {
             using var f = new Fixture();
             if (language == "javascript")
             {
-                f.Policy["programs"].Object()[language] = Read(Path.Combine(TestRunner.Root, "policy.json"))["programs"]!["node"]?.Copy();
+                f.Policy["programs"].Object()[language] = TestEnvironment.TemplatePolicy()["programs"]!["node"]?.Copy();
                 f.Restart();
             }
             string[] names = ["a b", "中文😀", "a'b", "&|%$()`", ""];
@@ -62,37 +63,36 @@ internal static class ScriptTests
                 expected["adapterVariable"] = null;
             }
             else form["args"] = expected["args"]?.Copy();
-            var state = f.Execute(form); Check.Equal("exited", state["state"].String());
-            Check.Equal(7L, state["process"]!["exit_code"].Integer("exit"));
-            Check.True(!state["operation_result"]!["acceptable_exit"].IsTrue());
-            Check.Json(expected, JsonNode.Parse(f.Output(state["execution_id"].String())));
-            Check.Equal("stderr-中文", f.Output(state["execution_id"].String(), "stderr"));
+            var state = f.Execute(form); Assert.Equal("exited", state["state"].String());
+            Assert.Equal(7L, state["process"]!["exit_code"].Integer("exit"));
+            Assert.False(state["operation_result"]!["acceptable_exit"].IsTrue());
+            JsonAssert.Equal(expected, JsonNode.Parse(f.Output(state["execution_id"].String())));
+            Assert.Equal("stderr-中文", f.Output(state["execution_id"].String(), "stderr"));
             var stored = Read(Path.Combine(state["record_dir"].String(), "result.json"));
-            Check.Equal(BusinessPaths.Resolve(f.Policy["programs"]![language]!["path"].String(), "file"), stored["argv"]![0].String());
-        }
+            Assert.Equal(BusinessPaths.Resolve(f.Policy["programs"]![language]!["path"].String(), "file"), stored["argv"]![0].String());
     }
 
-    [Case]
-    private static void EmbeddedPowerShellErrorsRemainTextAndInvalidSourceDoesNotExecute()
+    [Fact, Trait("Category", "Integration")]
+    public void EmbeddedPowerShellErrorsRemainTextAndInvalidSourceDoesNotExecute()
     {
         using var f = new Fixture();
         string script = f.Write("throw ' $` probe.ps1", "param()\nSet-StrictMode -Version Latest\n$ErrorActionPreference = 'Stop'\nthrow 'embedded-adapter-test'\n");
-        var failed = f.Execute(f.Script(script)); Check.Equal("exited", failed["state"].String());
-        Check.Equal(1L, failed["process"]!["exit_code"].Integer("exit"));
+        var failed = f.Execute(f.Script(script)); Assert.Equal("exited", failed["state"].String());
+        Assert.Equal(1L, failed["process"]!["exit_code"].Integer("exit"));
         string stderr = f.Output(failed["execution_id"].String(), "stderr");
-        Check.Contains("embedded-adapter-test", stderr); Check.True(!stderr.Contains("#< CLIXML"));
+        Assert.Contains("embedded-adapter-test", stderr); Assert.DoesNotContain("#< CLIXML", stderr);
         script = f.Write("broken ' $` probe.ps1", "Set-StrictMode -Version Latest\n$ErrorActionPreference = 'Stop'\n[IO.File]::WriteAllText('must-not-exist.txt','bad')\nif ( {\n");
-        var invalid = f.Execute(f.Script(script)); Check.Equal("exited", invalid["state"].String());
-        Check.Equal(1L, invalid["process"]!["exit_code"].Integer("exit"));
-        Check.True(!invalid["operation_result"]!["acceptable_exit"].IsTrue());
+        var invalid = f.Execute(f.Script(script)); Assert.Equal("exited", invalid["state"].String());
+        Assert.Equal(1L, invalid["process"]!["exit_code"].Integer("exit"));
+        Assert.False(invalid["operation_result"]!["acceptable_exit"].IsTrue());
         stderr = f.Output(invalid["execution_id"].String(), "stderr");
-        Check.Contains(Path.GetFileName(script), stderr); Check.True(!stderr.Contains("#< CLIXML"));
-        Check.True(!File.Exists(f.FilePath("must-not-exist.txt")));
-        Check.True(File.Exists(Path.Combine(invalid["record_dir"].String(), "business-process.json")));
+        Assert.Contains(Path.GetFileName(script), stderr); Assert.DoesNotContain("#< CLIXML", stderr);
+        Assert.False(File.Exists(f.FilePath("must-not-exist.txt")));
+        Assert.True(File.Exists(Path.Combine(invalid["record_dir"].String(), "business-process.json")));
     }
 
-    [Case]
-    private static void PowershellSplattingKeepsArraysAndFullParameterNames()
+    [Fact, Trait("Category", "Integration")]
+    public void PowershellSplattingKeepsArraysAndFullParameterNames()
     {
         using var f = new Fixture();
         string script = f.Write("参数 probe.ps1", "param([string[]]$Names,[string]$Message)\nSet-StrictMode -Version Latest\n$ErrorActionPreference = 'Stop'\n@{names=$Names;message=$Message} | ConvertTo-Json -Compress\n");
@@ -100,20 +100,20 @@ internal static class ScriptTests
         var expected = new JsonObject { ["names"] = new JsonArray("a b", "中文😀", "x\\\"y"), ["message"] = "&|%$()`" };
         WriteNew(parameters, new JsonObject { ["Names"] = expected["names"]?.Copy(), ["Message"] = expected["message"]?.Copy() });
         var form = f.Script(script); form["parameters_file"] = parameters;
-        var state = f.Execute(form); Check.Equal("exited", state["state"].String()); Check.True(state["operation_result"]!["acceptable_exit"].IsTrue());
-        Check.Json(expected, JsonNode.Parse(f.Output(state["execution_id"].String())));
+        var state = f.Execute(form); Assert.Equal("exited", state["state"].String()); Assert.True(state["operation_result"]!["acceptable_exit"].IsTrue());
+        JsonAssert.Equal(expected, JsonNode.Parse(f.Output(state["execution_id"].String())));
         Save(parameters, new JsonObject { ["Na"] = new JsonArray("wrong") });
-        var bad = f.Execute(form); Check.Equal("exited", bad["state"].String()); Check.True(!bad["operation_result"]!["acceptable_exit"].IsTrue());
-        Check.Contains("Unknown or abbreviated parameter name", f.Output(bad["execution_id"].String(), "stderr"));
+        var bad = f.Execute(form); Assert.Equal("exited", bad["state"].String()); Assert.False(bad["operation_result"]!["acceptable_exit"].IsTrue());
+        Assert.Contains("Unknown or abbreviated parameter name", f.Output(bad["execution_id"].String(), "stderr"));
         var arguments = f.Script(script); arguments["args"] = new JsonArray("-Names", "not-splatted");
-        var rejected = f.Execute(arguments); Check.Equal("rejected", rejected["state"].String()); Check.Contains("powershell_requires_parameters_file", rejected["error"]!["reason"].String());
+        var rejected = f.Execute(arguments); Assert.Equal("rejected", rejected["state"].String()); Assert.Contains("powershell_requires_parameters_file", rejected["error"]!["reason"].String());
     }
 
-    [Case]
-    private static void RuntimeSyntaxErrorsAreRetainedAndBatchNeverRuns()
+    [Fact, Trait("Category", "Integration")]
+    public void RuntimeSyntaxErrorsAreRetainedAndBatchNeverRuns()
     {
         using var f = new Fixture();
-        f.Policy["programs"].Object()["javascript"] = Read(Path.Combine(TestRunner.Root, "policy.json"))["programs"]!["node"]?.Copy();
+        f.Policy["programs"].Object()["javascript"] = TestEnvironment.TemplatePolicy()["programs"]!["node"]?.Copy();
         f.Restart();
         foreach (var (language, name, code) in new[]
         {
@@ -124,37 +124,37 @@ internal static class ScriptTests
         })
         {
             string script = f.Write(name, code); var state = f.Execute(f.Script(script, language));
-            Check.Equal("exited", state["state"].String());
-            Check.Equal(1L, state["process"]!["exit_code"].Integer("exit"));
-            Check.True(!state["operation_result"]!["acceptable_exit"].IsTrue());
+            Assert.Equal("exited", state["state"].String());
+            Assert.Equal(1L, state["process"]!["exit_code"].Integer("exit"));
+            Assert.False(state["operation_result"]!["acceptable_exit"].IsTrue());
             string stderr = f.Output(state["execution_id"].String(), "stderr");
-            Check.Contains(name, stderr);
-            if (language is "python" or "javascript") Check.Contains("SyntaxError", stderr);
+            Assert.Contains(name, stderr);
+            if (language is "python" or "javascript") Assert.Contains("SyntaxError", stderr);
             var stored = Read(Path.Combine(state["record_dir"].String(), "result.json"));
-            Check.Equal("not_applicable", stored["syntax"]!["status"].String());
-            Check.True(File.Exists(Path.Combine(state["record_dir"].String(), "business-process.json")));
+            Assert.Equal("not_applicable", stored["syntax"]!["status"].String());
+            Assert.True(File.Exists(Path.Combine(state["record_dir"].String(), "business-process.json")));
         }
         string batch = f.Write("batch.cmd", "@echo SHOULD_NOT_RUN\n"); f.Policy["programs"].Object()["batch"] = new JsonObject { ["kind"] = "native", ["path"] = batch }; f.Restart();
         var form = f.Form("location"); form["program"] = "batch"; var rejected = f.Execute(form);
-        Check.Equal("rejected", rejected["state"].String()); Check.Contains("native_requires_exe", rejected["error"]!["reason"].String());
-        Check.True(!File.Exists(Path.Combine(rejected["record_dir"].String(), "business-process.json")));
+        Assert.Equal("rejected", rejected["state"].String()); Assert.Contains("native_requires_exe", rejected["error"]!["reason"].String());
+        Assert.False(File.Exists(Path.Combine(rejected["record_dir"].String(), "business-process.json")));
     }
 
-    [Case]
-    private static void UserPythonWorkStillUsesConfiguredInterpreter()
+    [Fact, Trait("Category", "Integration")]
+    public void UserPythonWorkStillUsesConfiguredInterpreter()
     {
         using var f = new Fixture(); string path = f.Write("user-work.py", "from pathlib import Path\nPath('marker.txt').write_text('once')\nprint('user-work')\n");
-        var state = f.Execute(f.Script(path, "python")); Check.Equal("exited", state["state"].String()); Check.Equal(0L, state["process"]!["exit_code"].Integer("exit"));
-        Check.Equal("user-work\n", f.Output(state["execution_id"].String())); Check.Equal("once", File.ReadAllText(f.FilePath("marker.txt")));
-        Check.True(!Directory.Exists(f.FilePath("__pycache__")));
+        var state = f.Execute(f.Script(path, "python")); Assert.Equal("exited", state["state"].String()); Assert.Equal(0L, state["process"]!["exit_code"].Integer("exit"));
+        Assert.Equal("user-work\n", f.Output(state["execution_id"].String())); Assert.Equal("once", File.ReadAllText(f.FilePath("marker.txt")));
+        Assert.False(Directory.Exists(f.FilePath("__pycache__")));
         string unit = f.Write("test_user.py", "import unittest\nclass UserTests(unittest.TestCase):\n def test_value(self):\n  self.assertEqual(2+3,5)\n");
         var form = new JsonObject { ["operation"] = "python_unittest", ["program"] = "python", ["workdir"] = f.DirectoryPath, ["args"] = new JsonArray("test_user", "-v"), ["input_paths"] = new JsonArray(unit) };
-        state = f.Execute(form); Check.Equal("exited", state["state"].String()); Check.Equal(0L, state["process"]!["exit_code"].Integer("exit"));
-        Check.Contains("Ran 1 test", f.Output(state["execution_id"].String(), "stderr"));
+        state = f.Execute(form); Assert.Equal("exited", state["state"].String()); Assert.Equal(0L, state["process"]!["exit_code"].Integer("exit"));
+        Assert.Contains("Ran 1 test", f.Output(state["execution_id"].String(), "stderr"));
     }
 
-    [Case]
-    private static async Task OnlyBashPlanningStartsAnInterpreter()
+    [Fact, Trait("Category", "Integration")]
+    public async Task OnlyBashPlanningStartsAnInterpreter()
     {
         foreach (var (language, extension) in new[] { ("powershell", ".ps1"), ("javascript", ".cjs"), ("python", ".py"), ("bash", ".sh") })
         {
@@ -166,32 +166,32 @@ internal static class ScriptTests
             var request = f.Script(script, language); request["cwd"] = f.DirectoryPath;
             using var locks = new FileBindings();
             if (language == "bash")
-                Check.Throws<System.ComponentModel.Win32Exception>(() => ExecutionPlan.Create(request, f.Policy, locks, f.DirectoryPath).GetAwaiter().GetResult());
+                await Assert.ThrowsAnyAsync<System.ComponentModel.Win32Exception>(() => ExecutionPlan.Create(request, f.Policy, locks, f.DirectoryPath));
             else
             {
                 var plan = await ExecutionPlan.Create(request, f.Policy, locks, f.DirectoryPath);
-                Check.Equal(executable, plan.Executable);
-                Check.Equal("not_applicable", plan.Syntax["status"].String());
-                Check.True(locks.Bindings.ContainsKey(script));
+                Assert.Equal(executable, plan.Executable);
+                Assert.Equal("not_applicable", plan.Syntax["status"].String());
+                Assert.True(locks.Bindings.ContainsKey(script));
             }
         }
     }
 
-    [Case]
-    private static void NewlyAddedUnboundInputDoesNotAuthorizeRetry()
+    [Fact, Trait("Category", "Integration")]
+    public void NewlyAddedUnboundInputDoesNotAuthorizeRetry()
     {
         using var f = new Fixture(); string script = f.Write("unchanged.ps1", "param()\nSet-StrictMode -Version Latest\n$ErrorActionPreference = 'Stop'\nWrite-Output 'same'\n");
-        var form = f.Script(script); var first = f.Execute(form); Check.Equal("exited", first["state"].String());
+        var form = f.Script(script); var first = f.Execute(form); Assert.Equal("exited", first["state"].String());
         var business = f.Envelope(first["execution_id"].String())["business"].Object().Copy().Object();
         business["attempt"] = 1; business["previous_request"] = first["request_id"]?.Copy(); business["input_paths"] = new JsonArray(f.Write("extra.txt", "new only"));
         string request = f.FilePath("retry-request.json"); WriteNew(request, new JsonObject { ["business"] = business, ["fingerprint"] = RequestDigest(RequestShape.Shape(business)) });
-        var result = Fixture.Run(TestRunner.Server, ["run", "--request", request, "--policy", f.PolicyPath]);
-        Check.Equal(125, result.Exit); var rejected = JsonNode.Parse(result.Out).Object(); Check.Equal("rejected", rejected["state"].String());
-        Check.Contains("verified_changed_conditions_required", rejected["error"]!["reason"].String());
+        var result = Fixture.Run(TestEnvironment.Server, ["run", "--request", request, "--policy", f.PolicyPath]);
+        Assert.Equal(125, result.Exit); var rejected = JsonNode.Parse(result.Out).Object(); Assert.Equal("rejected", rejected["state"].String());
+        Assert.Contains("verified_changed_conditions_required", rejected["error"]!["reason"].String());
     }
 
-    [Case]
-    private static async Task DotnetEnvironmentCheckIsLimitedToCliInfo()
+    [Fact, Trait("Category", "Integration")]
+    public async Task DotnetEnvironmentCheckIsLimitedToCliInfo()
     {
         using var f = new Fixture(); string fakeDotnet = f.Write("dotnet.exe", "plan-only; never executed");
         f.Policy["programs"].Object()["dotnet"] = new JsonObject { ["kind"] = "native", ["path"] = fakeDotnet };
@@ -203,28 +203,29 @@ internal static class ScriptTests
             foreach (string[] arguments in new[] { new[] { "--version" }, new[] { "app.dll", "--info" } })
             {
                 var request = new JsonObject { ["operation"] = "native", ["program"] = "dotnet", ["args"] = new JsonArray(arguments.Select(value => (JsonNode?)JsonValue.Create(value)).ToArray()) };
-                var plan = await ExecutionPlan.Create(request, f.Policy, locks, f.DirectoryPath); Check.Equal(string.Join('|', arguments), string.Join('|', plan.Arguments));
+                var plan = await ExecutionPlan.Create(request, f.Policy, locks, f.DirectoryPath); Assert.Equal(string.Join('|', arguments), string.Join('|', plan.Arguments));
             }
             var info = new JsonObject { ["operation"] = "native", ["program"] = "dotnet", ["args"] = new JsonArray("--info") };
-            Check.Throws<InvalidRequest>(() => ExecutionPlan.Create(info, f.Policy, locks, f.DirectoryPath).GetAwaiter().GetResult(), "dotnet_environment_missing: PROCESSOR_ARCHITECTURE");
-            Check.True(Environment.GetEnvironmentVariable("PROCESSOR_ARCHITECTURE") is null);
-            Environment.SetEnvironmentVariable("PROCESSOR_ARCHITECTURE", "AMD64"); var allowed = await ExecutionPlan.Create(info, f.Policy, locks, f.DirectoryPath); Check.Equal("--info", allowed.Arguments.Single());
+            var error = await Assert.ThrowsAsync<InvalidRequest>(() => ExecutionPlan.Create(info, f.Policy, locks, f.DirectoryPath));
+            Assert.Contains("dotnet_environment_missing: PROCESSOR_ARCHITECTURE", error.Message);
+            Assert.Null(Environment.GetEnvironmentVariable("PROCESSOR_ARCHITECTURE"));
+            Environment.SetEnvironmentVariable("PROCESSOR_ARCHITECTURE", "AMD64"); var allowed = await ExecutionPlan.Create(info, f.Policy, locks, f.DirectoryPath); Assert.Equal("--info", allowed.Arguments.Single());
         }
         finally { Environment.SetEnvironmentVariable("PROCESSOR_ARCHITECTURE", before); }
     }
 
-    [Case]
-    private static void MissingProgramHealthIsObservationOnly()
+    [Fact, Trait("Category", "Integration")]
+    public void MissingProgramHealthIsObservationOnly()
     {
         using var f = new Fixture(); string missing = f.FilePath("ghost.exe");
         f.Policy["programs"].Object()["ghost"] = new JsonObject { ["kind"] = "native", ["path"] = missing }; f.Restart();
-        string hash = FileHash(f.PolicyPath); Check.True(!File.Exists(missing));
+        string hash = FileHash(f.PolicyPath); Assert.False(File.Exists(missing));
         var startup = File.ReadLines(f.FilePath("logs/server-events.jsonl")).Select(line => JsonNode.Parse(line).Object()).Last(item => item["kind"].Text() == "startup");
-        Check.True(startup["program_health"]!["missing"].Array().Any(item => item.Text() == "ghost"));
-        Check.Equal(0, startup["program_health"]!["healed"].Array().Count); Check.Equal(hash, FileHash(f.PolicyPath));
+        Assert.Contains(startup["program_health"]!["missing"].Array(), item => item.Text() == "ghost");
+        Assert.Empty(startup["program_health"]!["healed"].Array()); Assert.Equal(hash, FileHash(f.PolicyPath));
         var form = f.Form("location"); form["program"] = "unconfigured";
-        var rejected = f.Client.Raw("start_operation", form); Check.True(rejected["isError"].IsTrue());
+        var rejected = f.Client.Raw("start_operation", form); Assert.True(rejected["isError"].IsTrue());
         var events = File.ReadLines(f.FilePath("logs/server-events.jsonl")).Select(line => JsonNode.Parse(line).Object());
-        Check.True(events.Any(item => item["kind"].Text() == "rejected" && item["reason"].Text() == "program_not_configured"));
+        Assert.Contains(events, item => item["kind"].Text() == "rejected" && item["reason"].Text() == "program_not_configured");
     }
 }

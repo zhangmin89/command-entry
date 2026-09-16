@@ -4,7 +4,7 @@
 
 The server, owner, worker, sentinel, policy maintenance and metrics are C#.
 Old Python implementations and unittest modules have been replaced. Tests
-execute the real MCP protocol and processes through a C# runner.
+execute the real MCP protocol and processes through xUnit and Microsoft Testing Platform.
 
 `CommandEntry` contains only `Program.cs` and references the Server, Owner,
 Worker and Common class libraries. Each role library references only Common;
@@ -42,12 +42,12 @@ validation remain unchanged.
 | Publication maintenance preview, blockers, backup, quarantine | PublicationMaintenanceTests |
 | Numeric and text parity | ContractTests + Fixtures/reference.json |
 | C# conformance cleanup/write failures and short reads | CleanupTests |
-| Environment collisions, Unicode-prefix redaction, JSON replacement/cleanup, missing history, invalid failure records, startup-failure queries, owner-exit snapshots, metrics completeness and query fields | AuditRegressionTests.ConfirmedAuditRegressions (17 independent checks) |
+| Environment collisions, Unicode-prefix redaction, JSON replacement/cleanup, missing history, invalid failure records, startup-failure queries, owner-exit snapshots, metrics completeness and query fields | AuditRegressionTests (17 independent facts) |
 | Interpreter subprocess arguments, binary stdin, cwd, streams and exit codes | ScriptTests.ExternalInterpretersPreserveProcessContract |
 | Embedded PowerShell diagnostics and special-character paths | ScriptTests.EmbeddedPowerShellErrorsRemainTextAndInvalidSourceDoesNotExecute |
 | Syntax errors from actual interpreter execution | ScriptTests.RuntimeSyntaxErrorsAreRetainedAndBatchNeverRuns |
 | Interpreter startup during planning applies only to Bash | ScriptTests.OnlyBashPlanningStartsAnInterpreter |
-| Native artifact validation | RuntimeCommands.InspectAot + the full executable suite |
+| Native artifact validation | RuntimeCommands.InspectAot + the integration suite |
 
 The fixed reference JSON was exported from the original implementation before
 its removal: 281 finite double values (seed 20260915), five prepared requests,
@@ -61,7 +61,7 @@ The suite retains execution evidence under
 `.codex-command-records/csharp-test-*`. Synthetic records used for maintenance
 tests are also confined to those test directories.
 
-The former `.smoke` checks are covered by the C# runner:
+The former `.smoke` checks are covered by xUnit tests:
 
 | Former smoke check | C# assertion coverage |
 | --- | --- |
@@ -74,7 +74,7 @@ The former `.smoke` checks are covered by the C# runner:
 
 These tests assert outcomes that the old scripts only printed. The clean-exit
 assertion runs before fixture disposal; forced teardown cannot make it pass.
-The runner does not read or execute `.smoke` files. Historical inputs, request
+The tests do not read or execute `.smoke` files. Historical inputs, request
 records and logs in that directory remain preserved.
 
 Two equivalence defects exposed during migration were repaired:
@@ -89,20 +89,16 @@ rewritten by this source migration.
 
 ## Build and run the managed suite
 
-Requirements: Windows x64, .NET SDK 10, and the configured interpreters for
-the user-script tests. Use the command-entry MCP tools with policy key
-`dotnet`; bind relevant inputs on the first execution when lineage retries
-will be needed.
+Requirements: Windows x64, .NET SDK 10, and PowerShell, Node and Python on
+PATH for interpreter tests. Use the approved command-entry MCP tools.
 
 ~~~text
-dotnet build tests/CommandEntry.Tests.csproj --configuration Release --verbosity minimal
-dotnet tests/bin/Release/net10.0-windows/win-x64/CommandEntry.Tests.dll --root <repo-root> --server <repo-root>/src/CommandEntry/bin/Release/net10.0-windows/win-x64/CommandEntry.exe
+dotnet test --project tests/CommandEntry.Tests.csproj --configuration Release
 ~~~
 
-The runner executes test groups sequentially and reports failures with their
-exceptions while continuing through the remaining groups. Its `RESULT` line
-reports passed, failed and total groups; the exit code is 1 if any group
-failed, otherwise 0. It has no external test SDK or adapter.
+Tests use xUnit assertions and independently report facts and theory rows.
+See [test suites and automation](testing.md) for filters, TRX reporting and
+the checked PowerShell automation entry.
 
 The audit checks hold a share-delete reader open throughout a real `Save`,
 assert old/new snapshot contents, and separately verify that bound inputs and
@@ -121,17 +117,11 @@ Publishing additionally requires Windows C++ build tools and the Windows SDK.
 Preserve the normal Windows `OS` and `PROCESSOR_ARCHITECTURE` environment
 variables; do not suppress the native toolchain's checks.
 
-Publish into a new directory so old managed files cannot be mistaken for
-part of a fresh native artifact.
-
-~~~text
-dotnet publish src/CommandEntry/CommandEntry.csproj --configuration Release --runtime win-x64 --output artifacts/command-entry-process-win-x64 --verbosity minimal
-dotnet tests/bin/Release/net10.0-windows/win-x64/CommandEntry.Tests.dll --root <repo-root> --server <repo-root>/artifacts/command-entry-process-win-x64/CommandEntry.exe --aot true
-~~~
-
-The `--aot true` run checks the PE architecture, PE32+ header, absence of a
-managed CLR header and managed application companions before running the same
-MCP and maintenance suite.
+Run `scripts/test.ps1` with `Mode=NativeAot` through a PowerShell script
+operation and a JSON parameters file. It publishes into a unique artifact
+directory, checks the PE architecture, PE32+ header, absence of a managed CLR
+header and managed application companions, then runs the integration suite
+against the published executable. See [testing](testing.md).
 
 The native executable can also inspect an artifact directly:
 
@@ -165,7 +155,8 @@ the written artifact and refuses to overwrite an existing output file.
 
 Policy updates validate before changing the target pair, archive both old
 files, and restore them after a commit/re-pin failure. Maintenance uses C#
-without launching Python. The old policy schema and validation rules remain.
+without launching Python. Policy version 3 is required by Server, Owner and policy validation; unsupported
+versions remain rejected. Binding schema version 2 is independently versioned.
 
 Deployment and changes to installed configuration are user operations.
 Follow [deployment](deployment.md); preserve existing policies and records.

@@ -22,7 +22,7 @@ internal sealed partial class ExecutionServer
         using (var locks = new FileBindings())
         {
             locks.Add(this.policyPath); policy = Read(this.policyPath);
-            Require(policy.Int("version", 0) == 2, "policy_version_required");
+            Require(policy.Int("version", 0) == 3, "policy_version_required");
             policyHash = locks.Bindings[this.policyPath].String();
             if (bindingPath is not null) VerifyBinding(bindingPath);
         }

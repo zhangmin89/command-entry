@@ -44,7 +44,7 @@ internal static class ExecutionOwner
         if (request["operation"].Text() == "location") return Location();
         string cwd = BusinessPaths.Resolve(request["cwd"].String(), "directory"); BusinessPaths.CheckCwd(cwd);
         locks.Add(policyPath); var policy = Read(policyPath);
-        Require(policy.Int("version", 0) == 2, "policy_version_required");
+        Require(policy.Int("version", 0) == 3, "policy_version_required");
         string root = BusinessPaths.Context(policy, cwd), identity = ExecutionId(request["request_id"].String());
         string directory = Path.Combine(root, identity);
         Directory.CreateDirectory(root);
