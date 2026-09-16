@@ -11,7 +11,10 @@
     "powershell": {"kind": "powershell", "path": "C:\\Program Files\\PowerShell\\7\\pwsh.exe"},
     "python": {"kind": "python", "path": "C:\\Users\\zhang\\AppData\\Local\\Python\\bin\\python.exe"},
     "rg": {"kind": "native", "path": "C:\\Users\\zhang\\.codex\\command-entry\\rg.exe"},
-    "impeccable": {"kind": "native","path": "C:\\Users\\zhang\\.impeccable\\bin\\0.1.5\\impeccable.exe"}
+    "impeccable": {"kind": "native","path": "C:\\Users\\zhang\\.impeccable\\bin\\0.1.5\\impeccable.exe"},
+    "pwsh": {"kind": "powershell", "path": "C:\\Program Files\\PowerShell\\7\\pwsh.exe"},
+    "curl": {"kind": "native", "path": "C:\\Windows\\System32\\curl.exe"},
+    "tar": {"kind": "native", "path": "C:\\Windows\\System32\\tar.exe"}
   },
   "operations": {
     "native": {"acceptable_exit_codes": [0], "run_seconds": 300, "wait_category": "long_task"},

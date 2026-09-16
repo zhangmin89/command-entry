@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project>
+    <PropertyGroup>
+        <Authors>zhangmin</Authors>
+
+        <!-- 构建配置 -->
+        <DotnetVersion>net10.0</DotnetVersion>
+
+        <!-- C# 配置 -->
+        <Nullable>enable</Nullable>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <!-- net4.0 nullable -->
+        <LangVersion>latest</LangVersion>
+
+        <!-- 代码质量 -->
+        <!--  警告也报错-->
+        <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+        <!-- 保留可空分析和生成代码警告，但不将这些既有告警提升为错误 -->
+        <WarningsNotAsErrors></WarningsNotAsErrors>
+        <!--  代码风格也报错-->
+        <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+
+        <!-- 构建 -->
+        <Deterministic>true</Deterministic>
+        <DebugType>portable</DebugType>
+        <PublishRepositoryUrl>true</PublishRepositoryUrl>
+        <ContinuousIntegrationBuild Condition="'$(GITHUB_ACTIONS)' == 'true'">true</ContinuousIntegrationBuild>
+    </PropertyGroup>
+</Project>

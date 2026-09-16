@@ -1,0 +1,35 @@
+# 文本文件提交到 Git 仓库时统一规范为 LF。
+# 工作区换行由开发者本机 Git 配置决定。
+* text=auto
+# C# 差异比较
+*.cs text diff=csharp
+# Visual Studio 解决方案文件
+*.sln text eol=crlf
+
+# Shell scripts must use LF to run correctly on Unix-like systems.
+*.sh text eol=lf
+
+# Windows command scripts should use CRLF.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# 二进制资源，禁止任何文本转换
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.bmp binary
+*.webp binary
+*.ttf binary
+*.woff binary
+*.woff2 binary
+*.dll binary
+*.exe binary
+*.pdb binary
+*.snk binary
+*.pfx binary
+*.zip binary
+*.7z binary
+*.rar binary
+*.nupkg binary

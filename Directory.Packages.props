@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project>
+    <PropertyGroup>
+        <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+        <!-- 禁止项目通过 VersionOverride 私自覆盖中央版本 -->
+        <CentralPackageVersionOverrideEnabled>false</CentralPackageVersionOverrideEnabled>
+    </PropertyGroup>
+    <ItemGroup>
+        <PackageReference Include="ModelContextProtocol.Core" Version="2.2.0" />
+    </ItemGroup>
+</Project>
