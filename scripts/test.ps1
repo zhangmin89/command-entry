@@ -29,7 +29,7 @@ function Invoke-CheckedDotnet {
 function Invoke-TestCategory {
     param([Parameter(Mandatory)][ValidateSet('Unit', 'Integration')][string]$Category)
     $reportName = "$Category.trx"
-    Invoke-CheckedDotnet -CommandArguments @('test', '--project', $testProject, '--configuration', 'Release', '--no-build', '--filter-trait', "Category=$Category", '--report-trx', '--report-trx-filename', $reportName, '--results-directory', $runRoot)
+    Invoke-CheckedDotnet -CommandArguments @('test', '--project', $testProject, '--configuration', 'Release', '--no-build', '--output', 'Detailed', '--filter-trait', "Category=$Category", '--report-trx', '--report-trx-filename', $reportName, '--results-directory', $runRoot)
     $reportPath = Join-Path -Path $runRoot -ChildPath $reportName
     if (-not (Test-Path -LiteralPath $reportPath -PathType Leaf)) { throw "Missing test report: $reportPath" }
     [xml]$report = Get-Content -LiteralPath $reportPath -Raw
@@ -51,8 +51,9 @@ try {
     }
     else {
         $publishRoot = Join-Path -Path $runRoot -ChildPath 'native'
+        Invoke-CheckedDotnet -CommandArguments @('restore', $entryProject, '--runtime', 'win-x64', '-p:Configuration=Release', '--verbosity', 'normal')
         Write-Output "Publish native artifact: $publishRoot"
-        Invoke-CheckedDotnet -CommandArguments @('publish', $entryProject, '--configuration', 'Release', '--runtime', 'win-x64', '--output', $publishRoot, '--verbosity', 'minimal')
+        Invoke-CheckedDotnet -CommandArguments @('publish', $entryProject, '--configuration', 'Release', '--runtime', 'win-x64', '--no-restore', '--output', $publishRoot, '--verbosity', 'minimal')
         $nativeExe = Join-Path -Path $publishRoot -ChildPath 'CommandEntry.exe'
         if (-not (Test-Path -LiteralPath $nativeExe -PathType Leaf)) { throw "Missing native executable: $nativeExe" }
         $managedAssembly = Join-Path -Path $repositoryRoot -ChildPath 'src/CommandEntry/bin/Release/net10.0-windows/win-x64/CommandEntry.dll'

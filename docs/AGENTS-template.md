@@ -32,8 +32,9 @@ waiting go through the `command_entry_exec_server` MCP tools:
 - `wait` — blocking observation with a policy budget. Rule of thumb: poll
   again after the number of seconds the previous response suggested; a run
   of no-progress observations stops automatic waiting once the policy
-  threshold `wait_stop_after_no_progress` (default 12, ≈ 60 s at the 5 s
+  threshold `wait_stop_after_no_progress` (deployment template: 12, ≈ 60 s at the 5 s
   poll interval) is reached — stopping is not confirmation of termination.
+  All three wait settings must be explicit in policy; missing fields are rejected.
   Recorded `unknown` / `tool_error` returns `wait_outcome: unconfirmed`;
   use `cancel` to establish process-death confirmation, not another start.
 - `read_text` — stateless range read (`file`, `start_line`, `max_lines`,

@@ -25,6 +25,8 @@ internal sealed partial class ExecutionServer
             Require(policy.Int("version", 0) == 3, "policy_version_required");
             policyHash = locks.Bindings[this.policyPath].String();
             if (bindingPath is not null) VerifyBinding(bindingPath);
+            var waitProblems = PolicyMaintenance.ValidateWaitSettings(policy);
+            Require(waitProblems.Count == 0, "Invalid wait policy: " + Utf8.GetString(Packed(waitProblems)));
         }
         serveRoot = BusinessPaths.Resolve(policy["serve_root"].String()); Directory.CreateDirectory(serveRoot);
         publications = new(serveRoot);

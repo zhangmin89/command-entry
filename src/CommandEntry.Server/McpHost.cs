@@ -71,7 +71,7 @@ internal static class McpHost
         {
             ("status", "Read the current envelope of one execution from its record directory."),
             ("cancel", "Layered cancel: cancel-request.json first (graceful V2 state machine), hard kill of exact process instances after cancel_grace_seconds."),
-            ("wait", "Blocking observation loop over the record directory, bounded by policy wait_budget_seconds. Consecutive observations without progress stop automatic waiting once the policy threshold wait_stop_after_no_progress (default 12) is reached. Stopping is not confirmation of termination.")
+            ("wait", "Blocking observation loop over the record directory, bounded by policy wait_budget_seconds. Consecutive observations without progress stop automatic waiting once the policy threshold wait_stop_after_no_progress (deployment template: 12) is reached. All three wait settings are required in policy; no runtime defaults are supplied. Stopping is not confirmation of termination.")
         }) result.Add(Tool(name, description, new() { ["execution_id"] = String() }, ["execution_id"]));
         result.Add(Tool("output", "Paged retrieval of retained redacted output text (offset/count are Unicode characters).",
             new() { ["execution_id"] = String(), ["stream"] = String(), ["offset"] = new JsonObject { ["type"] = "number" }, ["count"] = new JsonObject { ["type"] = "number" } }, ["execution_id"]));

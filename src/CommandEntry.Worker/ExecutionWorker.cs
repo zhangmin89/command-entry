@@ -19,7 +19,7 @@ internal static class ExecutionWorker
         info.RedirectStandardOutput = false; info.RedirectStandardError = false;
         using var input = message["stdin_file"] is null ? null : File.OpenRead(message["stdin_file"].String());
         using var child = Process.Start(info)!;
-        WriteNew(Path.Combine(message["record_dir"].String(), "business-process.json"), WindowsProcess.Observe(child.Id));
+        PublishBusinessProcess(message["record_dir"].String(), WindowsProcess.Observe(child.Id));
         async Task FeedInput()
         {
             try { if (input is not null) await input.CopyToAsync(child.StandardInput.BaseStream); }
@@ -32,4 +32,7 @@ internal static class ExecutionWorker
         await feed;
         return child.ExitCode;
     }
+
+    internal static void PublishBusinessProcess(string directory, JsonObject observation) =>
+        PublishNew(Path.Combine(directory, "business-process.json"), observation);
 }

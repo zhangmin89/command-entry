@@ -96,7 +96,9 @@ internal sealed partial class ExecutionServer
                 result["note"] = "Execution record is missing; manual recovery of the original evidence is required. Process liveness is unknown.";
             return result;
         }
-        int budget = policy.Int("wait_budget_seconds", 30), interval = policy.Int("wait_poll_interval_seconds", 5), threshold = policy.Int("wait_stop_after_no_progress", 12);
+        int budget = policy["wait_budget_seconds"]!.GetValue<int>();
+        int interval = policy["wait_poll_interval_seconds"]!.GetValue<int>();
+        int threshold = policy["wait_stop_after_no_progress"]!.GetValue<int>();
         var elapsed = Stopwatch.StartNew();
         FileMutex mutex;
         try { mutex = new FileMutex(Path.Combine(directory, "wait-state.lock")); }

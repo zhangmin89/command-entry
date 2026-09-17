@@ -6,15 +6,27 @@ namespace CommandEntry;
 
 internal static class PolicyMaintenance
 {
-    internal static JsonArray Validate(JsonObject policy)
+    private static bool IntegerIn(JsonNode? value, int low, int high)
+    {
+        try { long number = value.Integer("integer_required"); return number >= low && number <= high; }
+        catch (InvalidRequest) { return false; }
+    }
+
+    internal static JsonArray ValidateWaitSettings(JsonObject policy)
     {
         var problems = new JsonArray();
-        void Need(bool condition, string reason) { if (!condition) problems.Add((JsonNode)reason); }
-        bool IntegerIn(JsonNode? value, int low, int high)
+        foreach (var (key, low, high) in new[] { ("wait_budget_seconds", 1, 300), ("wait_poll_interval_seconds", 1, 60), ("wait_stop_after_no_progress", 2, 100) })
         {
-            try { long number = value.Integer("integer_required"); return number >= low && number <= high; }
-            catch (InvalidRequest) { return false; }
+            if (!policy.ContainsKey(key)) problems.Add((JsonNode)(key + "_required"));
+            else if (!IntegerIn(policy[key], low, high)) problems.Add((JsonNode)(key + "_out_of_range"));
         }
+        return problems;
+    }
+
+    internal static JsonArray Validate(JsonObject policy)
+    {
+        var problems = ValidateWaitSettings(policy);
+        void Need(bool condition, string reason) { if (!condition) problems.Add((JsonNode)reason); }
         Need(policy["version"]?.ToJsonString() == "3", "version must be 3");
         foreach (string key in new[] { "record_root", "serve_root", "working_roots" })
             Need(key == "working_roots" ? policy[key] is JsonArray { Count: > 0 } : policy[key].Text() is not null, key + "_required");
@@ -37,9 +49,8 @@ internal static class PolicyMaintenance
         foreach (var (key, low, high) in new[]
         {
             ("output_quota_bytes", 1024, 16777216), ("read_quota_bytes", 256, 1048576), ("cleanup_seconds", 0, 600),
-            ("wait_budget_seconds", 1, 300), ("wait_poll_interval_seconds", 1, 60), ("cancel_grace_seconds", 1, 120),
-            ("cancel_confirm_seconds", 1, 60), ("claim_timeout_seconds", 10, 3600), ("start_confirm_seconds", 1, 120),
-            ("wait_stop_after_no_progress", 2, 100)
+            ("cancel_grace_seconds", 1, 120), ("cancel_confirm_seconds", 1, 60),
+            ("claim_timeout_seconds", 10, 3600), ("start_confirm_seconds", 1, 120)
         }) Need(!policy.ContainsKey(key) || IntegerIn(policy[key], low, high), key + "_out_of_range");
         Need(!policy.ContainsKey("require_orphan_guarantee") || policy["require_orphan_guarantee"]?.GetValueKind() is JsonValueKind.True or JsonValueKind.False,
             "require_orphan_guarantee_must_be_bool");

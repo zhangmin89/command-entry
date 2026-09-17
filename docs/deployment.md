@@ -159,6 +159,14 @@ a second list of keys. Server-side program validation remains authoritative.
 They do not configure claim expiry or active MCP wait behavior.
 Current waiting uses `wait_budget_seconds`,
 `wait_poll_interval_seconds` and `wait_stop_after_no_progress`.
+All three fields must be explicitly present in `policy.json` as integers:
+`wait_budget_seconds` in 1..300, `wait_poll_interval_seconds` in 1..60, and
+`wait_stop_after_no_progress` in 2..100. The deployment template supplies
+30, 5, and 12 respectively; the runtime supplies no missing-field defaults.
+Both `validate-policy` and server startup reject missing or invalid values
+and name the affected fields. Before upgrading a policy that omits any of
+these fields, add the intended values to the reviewed candidate and re-pin
+it through the maintenance flow above.
 
 The `metrics` command reports `complete`, `hook.unparsed_records` and
 `server.unparsed_event_lines`. Malformed JSON or non-object records are

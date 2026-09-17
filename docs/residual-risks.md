@@ -30,7 +30,7 @@ accepted per plan §2.
 ## Accepted property: the stdio channel is serial
 
 The exec server processes MCP requests one at a time over its stdio
-connection. A blocking `wait` (up to `wait_budget_seconds`, default 30s)
+connection. A blocking `wait` (up to `wait_budget_seconds`, deployment template: 30s)
 occupies the connection: any `status` / `cancel` / `read_text` issued on
 the SAME connection during that window queues behind it. This is not
 mitigated by "the model cannot do anything else while waiting" — concurrent
