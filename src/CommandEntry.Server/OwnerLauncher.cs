@@ -38,14 +38,15 @@ internal static partial class OwnerLauncher
         return (8, true);
     }
 
-    internal static int Start(string inputDirectory, string cwd, uint flags)
+    internal static int Start(string inputDirectory, string cwd, uint flags, PublicationProof proof)
     {
         string executable = Path.Combine(AppContext.BaseDirectory, "CommandEntry.exe");
         RecordJson.Require(File.Exists(executable), "owner_executable_missing");
         // Native creation flags are unavailable on ProcessStartInfo. Only the
         // fixed owner executable crosses this boundary; business argv never does.
         // Pass the input reference in the child environment, not a command string.
-        char[] block = EnvironmentBlock(Environment.GetEnvironmentVariables(), inputDirectory);
+        proof.Validate();
+        char[] block = EnvironmentBlock(Environment.GetEnvironmentVariables(), inputDirectory, proof);
         char[] command = ('"' + executable + "\"\0").ToCharArray();
         var startup = new StartupInfo { Size = (uint)Marshal.SizeOf<StartupInfo>(), Flags = 1, ShowWindow = 0 };
         if (CreateProcessW(executable, command, 0, 0, 0, flags | 0x400, block, cwd, in startup, out var info) == 0)
@@ -55,7 +56,7 @@ internal static partial class OwnerLauncher
         return checked((int)info.ProcessId);
     }
 
-    internal static char[] EnvironmentBlock(IDictionary source, string inputDirectory)
+    internal static char[] EnvironmentBlock(IDictionary source, string inputDirectory, PublicationProof proof)
     {
         var environment = new SortedDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         // Choose the ordinal-first spelling for each Windows case-insensitive name.
@@ -63,6 +64,8 @@ internal static partial class OwnerLauncher
         foreach (DictionaryEntry pair in source.Cast<DictionaryEntry>().OrderBy(pair => (string)pair.Key, StringComparer.Ordinal))
             environment.TryAdd((string)pair.Key, (string)pair.Value!);
         environment[InputVariable] = inputDirectory;
+        environment[PublicationProof.RequestVariable] = proof.RequestHash!;
+        environment[PublicationProof.PolicyVariable] = proof.PolicyHash!;
         return (string.Concat(environment.Select(pair => pair.Key + "=" + pair.Value + '\0')) + '\0').ToCharArray();
     }
 }

@@ -34,6 +34,8 @@ waiting go through the `command_entry_exec_server` MCP tools:
   of no-progress observations stops automatic waiting once the policy
   threshold `wait_stop_after_no_progress` (default 12, ≈ 60 s at the 5 s
   poll interval) is reached — stopping is not confirmation of termination.
+  Recorded `unknown` / `tool_error` returns `wait_outcome: unconfirmed`;
+  use `cancel` to establish process-death confirmation, not another start.
 - `read_text` — stateless range read (`file`, `start_line`, `max_lines`,
   optional `encoding`). Complete coverage metadata is returned; continue
   with `next_start_line`; strict decoding, no silent truncation.
@@ -50,12 +52,16 @@ dead (a `cancel-outcome.json` sidecar; the record itself stays `unknown`).
 Changing only `run_seconds` or `output_quota_bytes` cannot start another
 copy of running/unconfirmed business or alter its existing limits. Query
 the returned execution ID; do not resubmit to retrieve output.
+Equivalent resolved Windows path spellings and omitted/default UTF-8 encoding
+also reuse running/unconfirmed work. Old fingerprints and IDs remain valid.
+`publication_identity_unverifiable` means an old claim/reservation lacks enough
+evidence to distinguish its business content; preserve it for manual recovery.
 `claim_pending_unconfirmed_retry_later` means another server instance holds
 an unfinished claim — retry the call later, never improvise a workaround.
 A retry requires
 `previous_execution` with **identical business content**: the form
-(operation, program, args, bound paths) must match the previous attempt's
-content fingerprint exactly, otherwise the server rejects with
+(operation, program, args, bound paths) must match the previous attempt after
+the same path/default normalization, otherwise the server rejects with
 `previous_execution_content_mismatch` — a retry with edited arguments is a
 new intent, not a lineage retry. On top of that, genuinely changed bound
 inputs (file contents) are required; merely adding a new input file never

@@ -20,19 +20,21 @@ public sealed partial class AuditRegressionTests
     {
         (string Key, string Value)[] entries = [("http_proxy", "lower"), ("HTTP_PROXY", "upper"),
             ("PaTh", "mixed"), ("PATH", "canonical"), ("EMPTY", ""), ("UNICODE", "中文😀"),
-            (OwnerLauncher.InputVariable.ToLowerInvariant(), "untrusted-fixture")];
+            (OwnerLauncher.InputVariable.ToLowerInvariant(), "untrusted-fixture"),
+            (PublicationProof.RequestVariable.ToLowerInvariant(), "untrusted-request"), (PublicationProof.PolicyVariable.ToLowerInvariant(), "untrusted-policy")];
         string? expected = null;
         foreach (var ordered in new[] { entries, entries.Reverse().ToArray() })
         {
             var source = new OrderedDictionary(StringComparer.Ordinal);
             foreach (var (key, value) in ordered) source.Add(key, value);
-            string block = new(OwnerLauncher.EnvironmentBlock(source, "F:\\reviewed-input"));
+            string block = new(OwnerLauncher.EnvironmentBlock(source, "F:\\reviewed-input", new(new string('a', 64), new string('b', 64))));
             Assert.EndsWith("\0\0", block, StringComparison.Ordinal);
             if (expected is not null) Assert.Equal(expected, block);
             expected = block;
             var pairs = block.Split('\0', StringSplitOptions.RemoveEmptyEntries).Select(entry => entry.Split('=', 2)).ToArray();
             var values = pairs.ToDictionary(pair => pair[0], pair => pair[1], StringComparer.OrdinalIgnoreCase);
-            Assert.Equal(5, values.Count); Assert.Equal("upper", values["http_proxy"]); Assert.Equal("canonical", values["Path"]);
+            Assert.Equal(7, values.Count); Assert.Equal("upper", values["http_proxy"]); Assert.Equal("canonical", values["Path"]);
+            Assert.Equal(new string('a', 64), values[PublicationProof.RequestVariable]); Assert.Equal(new string('b', 64), values[PublicationProof.PolicyVariable]);
             Assert.Equal("", values["EMPTY"]); Assert.Equal("中文😀", values["UNICODE"]);
             Assert.Equal("F:\\reviewed-input", values[OwnerLauncher.InputVariable]);
             Assert.True(pairs.Select(pair => pair[0]).SequenceEqual(pairs.Select(pair => pair[0]).Order(StringComparer.OrdinalIgnoreCase)));

@@ -110,7 +110,13 @@ internal sealed partial class ExecutionServer
         {
             var state = ExecutionRecords.Snapshot(directory);
             if (ExecutionRecords.Terminal.Contains(state["state"].String()))
-            { var result = ExecutionRecords.Bounded(state); result["wait_outcome"] = "terminal"; return result; }
+            {
+                var result = ExecutionRecords.Bounded(state);
+                bool confirmed = ExecutionRecords.ConfirmedTerminal.Contains(state["state"].String());
+                result["wait_outcome"] = confirmed ? "terminal" : "unconfirmed";
+                if (!confirmed) result["note"] = "Process termination is unconfirmed. Use cancel to confirm whether all known process instances are dead.";
+                return result;
+            }
             var current = ExecutionRecords.Collect(directory, state);
             if (journal["previous"] is JsonObject previous)
             {

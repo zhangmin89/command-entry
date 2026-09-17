@@ -88,3 +88,10 @@ schema 2 with hash-bound prepared plans and a durable launch-commit transition.
 `AuditV7Tests` exercises interrupted publication stages with/without an old
 claim, warm/restarted servers, conflicting evidence, concurrent event writers,
 wait-lock diagnostics and ASCII handshake values.
+
+`AuditBoundaryTests` covers independently pinned owner publications (request,
+policy and missing proof), cross-server path/default-encoding aliases, legacy
+running/unknown identities, prepared aliases without published requests,
+unidentifiable claims, rejection of changed committed snapshots, retry lineage including earlier legacy instances, artifact
+path equivalence, occupied event mutexes, unconfirmed wait results, and validation
+of the actual read handle against allowed roots before any bytes are consumed.

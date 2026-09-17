@@ -15,13 +15,15 @@ internal static class TextRangeReader
         string path = BusinessPaths.Resolve(form["file"].String("file_required"), "file");
         var roots = policy["read_roots"] is null ? policy["working_roots"].Array() : policy["read_roots"].Array();
         var expanded = roots.SelectMany(r => r.Text() == "@working_roots" ? policy["working_roots"].Array().Select(n => n.String()) : [r.String()]);
-        Require(expanded.Any(r => BusinessPaths.Within(path, BusinessPaths.Resolve(r))), "file_outside_read_roots");
+        string[] allowedRoots = expanded.Select(r => BusinessPaths.Resolve(r)).ToArray();
+        Require(allowedRoots.Any(r => BusinessPaths.Within(path, r)), "file_outside_read_roots");
         int start = form.Int("start_line", 1), count = form.Int("max_lines", 100), quota = policy.Int("read_quota_bytes", 65536);
         Require(start >= 1, "invalid_start_line");
         Require(count is >= 1 and <= 1000, "max_lines_range_1_1000");
         string? encoding = form["encoding"].Text();
         Require(form["encoding"] is null || encoding is "utf-8" or "utf-8-sig" or "gbk" or "utf-16" or "utf-16-le", "unsupported_encoding");
         using var source = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        path = CheckOpenedPath(source, allowedRoots);
         long totalBytes = source.Length;
         byte[] prefix = new byte[Math.Min(4096, totalBytes)];
         source.ReadExactly(prefix);
@@ -132,6 +134,13 @@ internal static class TextRangeReader
         if (decodeWarning is not null) result["decode_warning"] = decodeWarning;
         return result;
     }
+    internal static string CheckOpenedPath(FileStream source, string[] allowedRoots)
+    {
+        string path = BusinessPaths.FromHandle(source.SafeFileHandle);
+        Require(allowedRoots.Any(root => BusinessPaths.Within(path, root)), "file_outside_read_roots");
+        return path;
+    }
+
     private static bool CanDecode(byte[] bytes, string encoding)
     {
         try { TextCodec.Get(encoding).GetString(bytes); return true; }

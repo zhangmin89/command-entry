@@ -64,13 +64,34 @@ Its executable now shares the server binary covered by the runtime binding;
 the install location and hook-registration trust still protect the hook entry.
 
 The first valid start in each server loads the publication index and scans old
-requests once. Later starts read only appended index entries. Stop all old
+requests once. Later starts read appended index entries and check the latest
+publications and standalone claims for equivalent business content. Stop all old
 server writers before switching: older writers must not publish into the same
 `serve_root` concurrently with this version. New journal entries use schema 2:
 `prepared` reserves the identity and hashes an immutable request/policy plan
 under `_prepared/`; `launch_committed` is flushed only after request, policy and
 claim publication, and always before owner launch. Schema 1 remains readable
 but cannot establish that launch was never authorized.
+
+Admission compares resolved, case-insensitive declared paths (including artifact
+values and expected-version keys), default UTF-8 encoding and empty optional
+collections. Program keys, arguments, artifact names and acceptance values keep
+their original meaning. Existing fingerprints, IDs and journal entries are not
+rewritten. Equivalent running/unconfirmed work returns its original ID; prepared
+work resumes from its original plan. A retry can reference an earlier terminal
+instance and keeps that instance's lineage and changed-bound-input requirement.
+If an old reservation/claim has no request or verifiable prepared plan, another
+spelling cannot establish that it is different work: new admission may reject
+with `publication_identity_unverifiable` until the original evidence is restored.
+
+The server passes expected publication SHA-256 values from its approved in-memory
+request and policy snapshots through the owner environment. The owner requires
+both values on this launch route, checks each held file handle before parsing
+its bytes, and clears the private environment variables before launching work.
+Missing or mismatched proof records a startup failure before creating
+business records. Explicit operator `run`/`serve` commands retain their existing
+local-input contract; this check does not provide an OS sandbox against arbitrary
+same-user process access.
 
 Resubmitting the same business content resumes a schema-2 prepared publication
 under the original identity and resource limits. Recovery checks the plan hash,
@@ -85,6 +106,20 @@ not automatically replayed. Schema-1 interrupted reservations also remain
 blocked. Preserve the index, prepared plans, claims and original request/record
 evidence; do not edit or rebuild the index to clear a block. Older versions
 reject schema 2, so binary rollback alone is not a supported recovery procedure.
+
+`serve_root/_prepared/` contains durable publication evidence. **Do not manually
+delete, modify or apply age-based cleanup to these files**, even after commitment
+or execution completion. Back them up consistently with the publication index,
+claims, published requests and execution records. There is currently no supported
+cleanup protocol for prepared plans.
+
+New-business admission reads and verifies the SHA-256 of the snapshot referenced
+by each fingerprint's current schema-2 index entry; it does not read every
+historical prepared plan. If a referenced snapshot is missing or changed,
+admission fails closed across the same `serve_root`, including unrelated new
+business. This does not terminate already running processes. Preserve the
+remaining evidence for recovery; do not remove or rewrite index entries to
+bypass the failure.
 
 ## Policy maintenance
 

@@ -28,21 +28,31 @@ internal static partial class BusinessPaths
             }
             throw new Win32Exception(error);
         }
+        path = FromHandle(handle);
+        if (kind == "file") Require(File.Exists(path), "input_file_missing");
+        if (kind == "directory") Require(Directory.Exists(path), "working_directory_missing");
+        return path;
+    }
+
+    internal static string FromHandle(SafeFileHandle handle)
+    {
         char[] buffer = new char[32768];
         uint length = GetFinalPathNameByHandleW(handle, buffer, (uint)buffer.Length, 0);
         if (length == 0) throw new Win32Exception(Marshal.GetLastPInvokeError());
         Require(length < buffer.Length, "resolved_path_too_long");
-        path = new string(buffer, 0, (int)length);
+        string path = new(buffer, 0, (int)length);
         if (path.StartsWith("\\\\?\\UNC\\", StringComparison.OrdinalIgnoreCase)) path = "\\\\" + path[8..];
         else if (path.StartsWith("\\\\?\\", StringComparison.Ordinal)) path = path[4..];
-        if (kind == "file") Require(File.Exists(path), "input_file_missing");
-        if (kind == "directory") Require(Directory.Exists(path), "working_directory_missing");
         return Path.TrimEndingDirectorySeparator(path);
     }
 
     internal static bool Within(string path, string root) =>
         string.Equals(path, root, StringComparison.OrdinalIgnoreCase) ||
         path.StartsWith(Path.TrimEndingDirectorySeparator(root) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+
+    internal static bool SameArtifacts(JsonObject before, JsonObject after) => before.Count == after.Count
+        && before.All(pair => after.ContainsKey(pair.Key)
+            && Resolve(pair.Value.String()).Equals(Resolve(after[pair.Key].String()), StringComparison.OrdinalIgnoreCase));
 
     internal static string Context(JsonObject policy, string cwd)
     {

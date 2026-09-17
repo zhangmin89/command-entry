@@ -73,7 +73,7 @@ internal sealed partial class ExecutionServer
             Directory.CreateDirectory(logRoot);
             fields ??= new(); fields["kind"] = kind; fields["ts"] = WindowsProcess.UnixNow;
             using var mutex = new Mutex(false, logMutexName);
-            try { mutex.WaitOne(); }
+            try { if (!mutex.WaitOne(TimeSpan.FromSeconds(2))) return; }
             catch (AbandonedMutexException) { /* Ownership transfers when a previous writer exits. */ }
             try { File.AppendAllText(Path.Combine(logRoot, "server-events.jsonl"), Utf8.GetString(Packed(fields)) + '\n', Utf8); }
             finally { mutex.ReleaseMutex(); }
@@ -242,9 +242,14 @@ internal sealed partial class ExecutionServer
         try { mutex = new(Path.Combine(claimDirectory, "claim.lock")); }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException) { throw new InvalidRequest("claim_pending_unconfirmed_retry_later"); }
         string id, requestId, inputDirectory;
+        PublicationProof proof;
         using (mutex)
         using (var index = publications.Open(() => History()))
         {
+            var equivalent = EquivalentPublication(form, fingerprint, index);
+            if (equivalent.Existing is not null) return equivalent.Existing;
+            fingerprint = equivalent.Fingerprint;
+            claimDirectory = Path.Combine(serveRoot, "_claims", fingerprint); Directory.CreateDirectory(claimDirectory);
             string claimPath = Path.Combine(claimDirectory, "claim.json");
             var preparation = index.ReadPrepared(fingerprint);
             JsonObject envelope;
@@ -304,6 +309,7 @@ internal sealed partial class ExecutionServer
             }
             inputDirectory = Path.Combine(serveRoot, id);
             string requestFile = Path.Combine(inputDirectory, "request.json"), policyFile = Path.Combine(inputDirectory, "policy.json");
+            proof = new(Hash(Packed(envelope)), Hash(Packed(snapshot)));
             CheckPublicationFile(requestFile, envelope); CheckPublicationFile(policyFile, snapshot);
             if (preparation is null) index.Prepare(fingerprint, id, envelope, snapshot);
             string publication = inputDirectory;
@@ -328,7 +334,7 @@ internal sealed partial class ExecutionServer
             if (StartupFailure(id) is { } recordedFailure)
                 return StartResult(id, requestId, cwd, "start_failed", recordedFailure, "Recovered publication retains its recorded startup failure; no process was started.");
         }
-        try { OwnerLauncher.Start(inputDirectory, cwd, spawnFlags); }
+        try { OwnerLauncher.Start(inputDirectory, cwd, spawnFlags, proof); }
         catch (Exception error) when (ExecutionRecords.Handled(error))
         {
             var detail = ExecutionRecords.Error(error);
@@ -350,6 +356,59 @@ internal sealed partial class ExecutionServer
     private static void CheckPublicationFile(string path, JsonObject expected)
     {
         if (File.Exists(path)) Require(FileHash(path) == Hash(Packed(expected)), "publication_file_conflict: " + path + "; preserve existing evidence.");
+    }
+
+    private (string Fingerprint, JsonObject? Existing) EquivalentPublication(JsonObject form, string original, PublicationIndex.Session index)
+    {
+        // The index lock serializes every publication, including writers using different spellings.
+        // Never acquire another fingerprint lock while holding it (claim -> index is the lock order).
+        string key = ContentIdentity.Key(form), claims = Path.Combine(serveRoot, "_claims");
+        var fingerprints = index.Fingerprints.Concat(Directory.EnumerateDirectories(claims)
+            .Where(path => File.Exists(Path.Combine(path, "claim.json"))).Select(path => Path.GetFileName(path)))
+            .Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
+        var matches = new List<(string Fingerprint, string Id, bool Prepared)>();
+        foreach (string fingerprint in fingerprints)
+        {
+            string? id = index.Latest(fingerprint);
+            var prepared = index.ReadPrepared(fingerprint);
+            var snapshot = prepared ?? index.ReadPublicationSnapshot(fingerprint);
+            string claim = Path.Combine(claims, fingerprint, "claim.json");
+            if (id is null && File.Exists(claim))
+            {
+                // The existing exact-key recovery path owns malformed-claim diagnostics.
+                if (fingerprint == original) continue;
+                id = Read(claim)["execution_id"].Text();
+                Require(JsonFields.IsUuid(id), "publication_identity_unverifiable: preserve the original claim");
+            }
+            if (id is null) continue;
+            string path = Path.Combine(serveRoot, id, "request.json");
+            JsonObject envelope;
+            if (snapshot is not null) envelope = snapshot["envelope"].Object();
+            else if (File.Exists(path)) envelope = ReadRequest(path);
+            else
+            {
+                Require(fingerprint == original, "publication_identity_unverifiable: " + id + "; recover the original request before starting new work");
+                return (original, null);
+            }
+            if (fingerprint != original && ContentIdentity.FromEnvelope(envelope) != key) continue;
+            matches.Add((fingerprint, id, prepared is not null));
+            if (prepared is not null) continue;
+            Directory.CreateDirectory(Path.GetDirectoryName(claim)!);
+            Require(ClaimIdentity(fingerprint, claim, index) == id, "claim_index_mismatch: preserve evidence for manual recovery");
+            string directory = Locate(id), state = ExecutionRecords.Snapshot(directory)["state"].String();
+            if (StartupFailureWithoutResult(id, directory) is null && !ExecutionRecords.ConfirmedTerminal.Contains(state) && !Abandoned(directory))
+                return (fingerprint, Existing(id));
+        }
+        var pending = matches.Where(match => match.Prepared).ToArray();
+        Require(pending.Length <= 1, "equivalent_publications_unconfirmed: preserve all original reservations");
+        if (pending.Length == 1) return (pending[0].Fingerprint, null);
+        string? previous = form["previous_execution"].Text();
+        if (JsonFields.IsUuid(previous) && File.Exists(Path.Combine(serveRoot, previous!, "request.json")))
+        {
+            string? fingerprint = ReadRequest(Path.Combine(serveRoot, previous!, "request.json"))["content_fingerprint"].Text();
+            if (matches.Any(match => match.Fingerprint == fingerprint)) return (fingerprint!, null);
+        }
+        return (matches.Any(match => match.Fingerprint == original) || matches.Count == 0 ? original : matches[0].Fingerprint, null);
     }
 
     private JsonObject StartResult(string id, string requestId, string cwd, string state, JsonObject? failure, string note)

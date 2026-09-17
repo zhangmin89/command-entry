@@ -114,11 +114,15 @@ internal sealed class PublicationIndex(string root)
     {
         internal long Count(string fingerprint) => index.entries.GetValueOrDefault(fingerprint)?.Count ?? 0;
         internal string? Latest(string fingerprint) => index.entries.GetValueOrDefault(fingerprint)?.Id;
+        internal IEnumerable<string> Fingerprints => index.entries.Keys;
         internal void Reserve(string fingerprint, string id) => Append(fingerprint, checked(Count(fingerprint) + 1), id);
-        internal JsonObject? ReadPrepared(string fingerprint)
+        internal JsonObject? ReadPrepared(string fingerprint) =>
+            index.entries.GetValueOrDefault(fingerprint)?.Pending == true ? ReadPublicationSnapshot(fingerprint) : null;
+
+        internal JsonObject? ReadPublicationSnapshot(string fingerprint)
         {
             var entry = index.entries.GetValueOrDefault(fingerprint);
-            if (entry?.Pending != true) return null;
+            if (entry?.Preparation is null) return null;
             string file = index.PreparationPath(entry.Preparation!);
             using var locks = new FileBindings();
             locks.Add(file);

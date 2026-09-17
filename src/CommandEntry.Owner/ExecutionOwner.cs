@@ -7,11 +7,11 @@ namespace CommandEntry;
 internal static class ExecutionOwner
 {
     internal static string Executable => Path.Combine(AppContext.BaseDirectory, "CommandEntry.exe");
-    internal static async Task<int> Serve(string inputDirectory)
+    internal static async Task<int> Serve(string inputDirectory, PublicationProof? proof = null)
     {
         try
         {
-            var result = await Run(Path.Combine(inputDirectory, "request.json"), Path.Combine(inputDirectory, "policy.json"));
+            var result = await Run(Path.Combine(inputDirectory, "request.json"), Path.Combine(inputDirectory, "policy.json"), proof);
             return result["state"].Text() is "exited" or "running" or "starting" or "cancel_requested" or "cleaning" ? 0 : 125;
         }
         catch (Exception error) when (ExecutionRecords.Handled(error))
@@ -34,16 +34,16 @@ internal static class ExecutionOwner
             ["persistence"] = new JsonObject { ["durable"] = false, ["result_readable_now"] = true, ["cross_session_retrieval"] = false } };
     }
 
-    internal static async Task<JsonObject> Run(string requestPath, string policyPath)
+    internal static async Task<JsonObject> Run(string requestPath, string policyPath, PublicationProof? proof = null)
     {
         var elapsed = Stopwatch.StartNew();
         using var locks = new FileBindings();
-        locks.Add(requestPath);
-        var envelope = Read(requestPath); var request = RequestShape.Shape(envelope["business"].Object());
+        proof?.Validate();
+        var envelope = locks.ReadPublication(requestPath, proof?.RequestHash, "request"); var request = RequestShape.Shape(envelope["business"].Object());
         Require(MatchesRequest(envelope["fingerprint"].Text(), request), "prepared_request_content_conflict");
         if (request["operation"].Text() == "location") return Location();
         string cwd = BusinessPaths.Resolve(request["cwd"].String(), "directory"); BusinessPaths.CheckCwd(cwd);
-        locks.Add(policyPath); var policy = Read(policyPath);
+        var policy = locks.ReadPublication(policyPath, proof?.PolicyHash, "policy");
         Require(policy.Int("version", 0) == 3, "policy_version_required");
         string root = BusinessPaths.Context(policy, cwd), identity = ExecutionId(request["request_id"].String());
         string directory = Path.Combine(root, identity);
@@ -141,7 +141,7 @@ internal static class ExecutionOwner
                     .Select(p => (JsonNode?)JsonValue.Create(p.Key)).ToArray();
                 Require(changed.Length > 0, "verified_changed_conditions_required_for_new_attempt");
                 Require(JsonNode.DeepEquals(previous["request"].Object().ArrayOrEmpty("acceptance"), request.ArrayOrEmpty("acceptance")) &&
-                    JsonNode.DeepEquals(previous["request"].Object().ObjectOrEmpty("artifacts"), request.ObjectOrEmpty("artifacts")), "original_acceptance_must_be_preserved");
+                    BusinessPaths.SameArtifacts(previous["request"].Object().ObjectOrEmpty("artifacts"), request.ObjectOrEmpty("artifacts")), "original_acceptance_must_be_preserved");
                 result["changed_conditions"] = new JsonArray(changed);
             }
             result["state"] = "starting"; Persist();

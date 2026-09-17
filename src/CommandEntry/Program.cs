@@ -9,8 +9,11 @@ internal static class Program
         string? ownerInput = Environment.GetEnvironmentVariable(OwnerLauncher.InputVariable);
         if (ownerInput is not null)
         {
+            var proof = new PublicationProof(Environment.GetEnvironmentVariable(PublicationProof.RequestVariable), Environment.GetEnvironmentVariable(PublicationProof.PolicyVariable));
             Environment.SetEnvironmentVariable(OwnerLauncher.InputVariable, null);
-            return await ExecutionOwner.Serve(ownerInput);
+            Environment.SetEnvironmentVariable(PublicationProof.RequestVariable, null);
+            Environment.SetEnvironmentVariable(PublicationProof.PolicyVariable, null);
+            return await ExecutionOwner.Serve(ownerInput, proof);
         }
         try
         {

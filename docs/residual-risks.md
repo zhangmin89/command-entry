@@ -24,6 +24,8 @@ accepted per plan §2.
 - Torn reads: each `read_text` call is one consistent `open()` snapshot
   (rename-safe); reads spanning concurrent in-place modifications are not
   globally consistent and the metadata says so.
+  Before reading bytes, the actual open handle's final path is checked against
+  the resolved read roots, closing the validation-to-open path-swap window.
 
 ## Accepted property: the stdio channel is serial
 
@@ -54,8 +56,14 @@ legacy template field, not proof that a claim can be released safely.
 `serve_root/publication-index.jsonl` is an append-only identity reservation
 journal, protected by a short global publication lock after the fingerprint
 claim lock. Each server scans legacy requests once on its first valid start,
-then keeps a fingerprint/count/latest-ID map and reads only appended journal
-entries. Cold startup remains linear in retained history; memory grows with
+then keeps a fingerprint/count/latest-ID map and reads appended journal entries.
+Each start also compares hash-bound publication snapshots (including committed
+plans), legacy latest requests and standalone claims for normalized business
+equivalence. Indexed schema-2 candidates use their verified snapshots instead of
+reopening unrelated published requests. This admission work grows with the
+number of retained fingerprints; it does not rescan every historical attempt.
+Unidentifiable old claims/reservations block new admission because they cannot
+be proven to represent different work. Cold startup remains linear in retained history; memory grows with
 distinct fingerprints, and the journal grows with reservations. There is no
 automatic compaction. Counters include retries and interrupted reservations,
 so gaps are intentional. The index is durable before request publication or
@@ -88,18 +96,30 @@ that transition, or for legacy schema-1 reservations, the above blocks remain.
 There is no general ghost recovery or manual recovery command. Torn journals,
 missing or changed preparation files and conflicting publication evidence
 remain manual-recovery cases; preparations are retained even after commitment.
+Do not manually delete, modify or apply age-based cleanup to `_prepared/` files,
+including those for completed executions. New-business admission reads and
+hash-checks the snapshot referenced by each fingerprint's current schema-2 index
+entry, not every historical plan. A missing or changed referenced snapshot blocks
+unrelated new business sharing that `serve_root` as well; already running
+processes are not terminated. Retain a consistent backup of plans, index, claims,
+published requests and execution records as described in [deployment](deployment.md).
 
 Concurrent waits for one execution use an exclusive progress lock. A second
 server receives `wait_in_progress_retry_later` without modifying progress;
 retry observation for the same execution ID after the first wait returns.
+For recorded `unknown` or `tool_error`, wait returns `unconfirmed`, retains the
+record state, and directs callers to cancellation for process-death confirmation.
+Confirmed terminal states and recorded startup failures still return `terminal`.
 
 Server event appends are serialized across processes with a named Windows mutex
-derived from the canonical log root. This prevents cooperating server writers
-from losing lines to sharing conflicts. Storage/access failures remain
+derived from the canonical log root. Each acquisition waits at most two seconds;
+on timeout that event is dropped and the call continues. Cooperating writers
+that acquire the mutex append without sharing conflicts. Storage/access failures remain
 best-effort and do not fail business calls; crashes or non-cooperating writers
 can still leave incomplete lines, which Metrics counts as unparsed. Logs have
 no automatic retention limit or rotation. Rejection audit receipts retain their
 separate persisted/not-persisted indication.
+The mutex timeout bounds contention only; it is not a deadline for filesystem I/O.
 
 Mutable JSON readers use read/delete sharing. The writer uses
 `SetFileInformationByHandle(FileRenameInfoEx)` with replace/POSIX flags: an
