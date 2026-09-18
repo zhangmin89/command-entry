@@ -44,7 +44,7 @@ internal static class PublicationMaintenance
         string quarantine = Path.Combine(install, "quarantine", "half-published-20260914"), backup = Path.Combine(install, "maintenance", "publication-fixes-20260914");
         var oldBinding = AssertBinding(install); string policyHash = CheckedHash(policy), bindingHash = CheckedHash(bindingPath);
         var copies = new JsonArray();
-        foreach (string name in PolicyMaintenance.RuntimeNames(source))
+        foreach (string name in BindingBuilder.RuntimeNames(source))
         {
             string from = Path.Combine(source, name), to = Path.Combine(install, name);
             Require(oldBinding["runtime_files"].Array().Count(item => item!["path"].Text()?.Equals(to, StringComparison.OrdinalIgnoreCase) == true) == 1, "Runtime missing from binding: " + to);

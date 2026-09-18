@@ -6,9 +6,11 @@ The server, owner, worker, sentinel, policy maintenance and metrics are C#.
 Old Python implementations and unittest modules have been replaced. Tests
 execute the real MCP protocol and processes through xUnit and Microsoft Testing Platform.
 
-`CommandEntry` contains only `Program.cs` and references the Server, Owner,
-Worker and Common class libraries. Each role library references only Common;
-maintenance commands belong to Server. The three process roles still launch
+`CommandEntry` contains only `Program.cs` and includes the Server, Owner, Worker,
+Common and Deployment class libraries. Server references Deployment and Common;
+Deployment, Owner and Worker reference Common. Deployment keeps policy validation
+and binding generation in separate classes and orchestrates them through one
+`deploy` command. Other maintenance commands belong to Server. The three process roles still launch
 the same executable and retain their existing arguments, environment handoff,
 Job handshake and execution records. The class-library split does not merge
 their processes. Native AOT compiles the libraries into the executable.
@@ -135,8 +137,7 @@ CommandEntry.exe inspect-aot --executable <absolute-published-executable>
 | --- | --- |
 | --policy PATH --binding PATH | stdio MCP server with startup integrity check |
 | sentinel --records PATH | read one hook event from stdin and return its decision |
-| validate-policy --policy PATH | validate the policy structure |
-| build-binding --runtime-root PATH --policy PATH --output PATH | create a new binding; refuses overwrite |
+| deploy --runtime-root PATH --policy PATH --output PATH | validate the policy, then create a new binding; refuses overwrite |
 | update-policy --repo-root PATH [--policy PATH] | validate, back up the old pair, commit and re-pin |
 | update-policy --repo-root PATH --add-program NAME --program-path PATH --kind KIND | reviewed program addition |
 | metrics --records PATH --events PATH --serve PATH | envelope-only metrics |
@@ -148,7 +149,7 @@ for diagnosis. There are no published PowerShell adapter or maintenance files.
 Bindings cover the executable, including its embedded adapter constants. Managed development
 bindings additionally cover the application DLL, deps and runtimeconfig files,
 plus `CommandEntry.Common.dll`, `CommandEntry.Server.dll`,
-`CommandEntry.Owner.dll` and `CommandEntry.Worker.dll`. Binding checks require
+`CommandEntry.Owner.dll`, `CommandEntry.Worker.dll` and `CommandEntry.Deployment.dll`. Binding checks require
 every module and reject a changed hash for any member.
 Binding generation holds read handles through hashing and writing; it checks
 the written artifact and refuses to overwrite an existing output file.

@@ -17,7 +17,7 @@ public sealed class PolicyVersionTests
     public void ValidatorRejectsUnsupportedOrMalformedVersion(string json)
     {
         var policy = new JsonObject { ["version"] = JsonNode.Parse(json) };
-        Assert.Contains(PolicyMaintenance.Validate(policy), problem => problem.Text() == "version must be 3");
+        Assert.Contains(PolicyValidator.Validate(policy), problem => problem.Text() == "version must be 3");
     }
 
     [Theory, Trait("Category", "Integration")]
@@ -28,7 +28,7 @@ public sealed class PolicyVersionTests
     {
         using var f = new Fixture();
         Assert.Equal(3, f.Policy.Int("version", 0));
-        Assert.Empty(PolicyMaintenance.Validate(f.Policy));
+        Assert.Empty(PolicyValidator.Validate(f.Policy));
         var completed = f.Execute(f.Form("output", "1"));
         Assert.Equal("exited", completed["state"].String());
         Assert.Equal(0L, completed["process"]!["exit_code"].Integer("exit_code"));

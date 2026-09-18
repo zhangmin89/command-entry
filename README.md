@@ -8,7 +8,8 @@ The stdio MCP transport uses the official ModelContextProtocol.Core SDK
 
 - `src/CommandEntry/` — executable project containing only `Program.cs` for entry dispatch.
 - `src/CommandEntry.Server/` — MCP server, queries, owner launch, text reads,
-  sentinel, policy maintenance and metrics.
+  sentinel, policy updates and metrics.
+- `src/CommandEntry.Deployment/` — deployment orchestration, policy validation and binding generation.
 - `src/CommandEntry.Owner/` — task validation, Job ownership, output capture,
   timeout, cleanup and result publication.
 - `src/CommandEntry.Worker/` — Job handshake, business-process launch, stdin
@@ -19,16 +20,17 @@ The stdio MCP transport uses the official ModelContextProtocol.Core SDK
 - Maintenance runs directly through the executable's C# subcommands.
 - `policy.json` — deployment template; review its paths before use.
 
-The executable references all four class libraries. Server, Owner and Worker
-reference Common without referencing each other. Existing types retain the
-`CommandEntry` namespace and internal visibility; friend assemblies permit
-the entry point, consuming modules and regression tests to use them.
+The executable includes five class libraries through its project references.
+Server references Deployment and Common; Deployment, Owner and Worker reference
+Common. Existing types retain the `CommandEntry` namespace and internal
+visibility; friend assemblies permit the entry point, consuming modules and
+regression tests to use them.
 
 Server, Owner and Worker remain separate processes started from the same
 `CommandEntry.exe`. Owner still assigns Worker to its Job before the handshake
-allows Worker to start business work. Managed builds include four module DLLs;
+allows Worker to start business work. Managed builds include five module DLLs;
 Native AOT compiles their referenced code into the single executable. Managed
-runtime bindings cover all four module DLLs as well as the entry assembly,
+runtime bindings cover all five module DLLs as well as the entry assembly,
 apphost, deps and runtimeconfig files.
 
 Project implementation, test assertions, policy validation, binding generation
@@ -61,9 +63,12 @@ Run through the approved command-entry MCP tools, using the native `dotnet`
 policy key. The test project uses xUnit.net v3 and Microsoft Testing Platform.
 
 ~~~text
-dotnet test --project tests/CommandEntry.Tests.csproj --configuration Release
+dotnet build tests/CommandEntry.Tests.csproj --configuration Release
+dotnet tests/bin/Release/net10.0-windows/win-x64/CommandEntry.Tests.dll
 ~~~
 
+Direct assembly execution emits live test progress without extra progress flags.
+When using `dotnet test`, add `--output Detailed` for SDK-rendered test results.
 [Test suites and automation](docs/testing.md) documents category filters,
 TRX reports, interpreter prerequisites and `scripts/test.ps1`.
 The automated Managed run covers unit and integration tests; the NativeAot
@@ -72,6 +77,8 @@ GitHub Actions runs both modes on Windows.
 
 Implementation details: [C# migration](docs/csharp-migration.md).
 Deployment remains a separate user operation: [deployment](docs/deployment.md).
+Use `CommandEntry.exe deploy --runtime-root PATH --policy PATH --output NEW-PATH`
+to validate the policy and create its runtime binding in one command.
 
 ## Execution contract
 

@@ -12,7 +12,7 @@ public sealed class PublicationMaintenanceTests
         foreach (string file in Directory.GetFiles(Path.GetDirectoryName(TestEnvironment.Server)!))
             if (Path.GetExtension(file) is ".exe" or ".dll" or ".json") File.Copy(file, Path.Combine(install, Path.GetFileName(file)));
         File.Copy(f.PolicyPath, Path.Combine(install, "policy.json"));
-        _ = PolicyMaintenance.BuildBinding(install, Path.Combine(install, "policy.json"), Path.Combine(install, "binding.json"));
+        _ = BindingBuilder.BuildBinding(install, Path.Combine(install, "policy.json"), Path.Combine(install, "binding.json"));
         foreach (var (id, fingerprint) in PublicationMaintenance.Identities)
         {
             string directory = Path.Combine(install, "serve-input", id); Directory.CreateDirectory(directory);

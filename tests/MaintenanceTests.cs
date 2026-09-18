@@ -41,26 +41,26 @@ public sealed class MaintenanceTests
     [Fact, Trait("Category", "Integration")]
     public void PolicyValidationBoundsAndNativeBatchGuard()
     {
-        using var f = new Fixture(); Assert.Empty(PolicyMaintenance.Validate(f.Policy));
+        using var f = new Fixture(); Assert.Empty(PolicyValidator.Validate(f.Policy));
         foreach (var (key, low, high) in new[] { ("output_quota_bytes", 1024, 16777216), ("read_quota_bytes", 256, 1048576), ("cleanup_seconds", 0, 600),
             ("wait_budget_seconds", 1, 300), ("wait_poll_interval_seconds", 1, 60), ("cancel_grace_seconds", 1, 120), ("cancel_confirm_seconds", 1, 60),
             ("claim_timeout_seconds", 10, 3600), ("start_confirm_seconds", 1, 120), ("wait_stop_after_no_progress", 2, 100) })
         {
-            foreach (int value in new[] { low, high }) { var policy = f.Policy.Copy().Object(); policy[key] = value; Assert.Empty(PolicyMaintenance.Validate(policy)); }
+            foreach (int value in new[] { low, high }) { var policy = f.Policy.Copy().Object(); policy[key] = value; Assert.Empty(PolicyValidator.Validate(policy)); }
             foreach (JsonNode? value in new JsonNode?[] { JsonValue.Create(low - 1), JsonValue.Create(high + 1), JsonValue.Create(true), JsonValue.Create("1"), null })
-            { var policy = f.Policy.Copy().Object(); policy[key] = value?.Copy(); Assert.Contains(PolicyMaintenance.Validate(policy), problem => problem.Text() == key + "_out_of_range"); }
+            { var policy = f.Policy.Copy().Object(); policy[key] = value?.Copy(); Assert.Contains(PolicyValidator.Validate(policy), problem => problem.Text() == key + "_out_of_range"); }
         }
-        var bad = f.Policy.Copy().Object(); bad["version"] = 2; Assert.Contains(PolicyMaintenance.Validate(bad), item => item.Text() == "version must be 3");
+        var bad = f.Policy.Copy().Object(); bad["version"] = 2; Assert.Contains(PolicyValidator.Validate(bad), item => item.Text() == "version must be 3");
         string batch = f.Write("native.cmd", "@echo must-not-run"); bad = f.Policy.Copy().Object();
         bad["programs"].Object()["batch"] = new JsonObject { ["kind"] = "native", ["path"] = batch };
-        Assert.Contains(PolicyMaintenance.Validate(bad), item => item.Text() == "native_program_must_be_exe:batch");
-        bad = f.Policy.Copy().Object(); bad["read_roots"] = new JsonArray(); Assert.Empty(PolicyMaintenance.Validate(bad));
-        bad["read_roots"] = new JsonArray("@working_roots"); Assert.Empty(PolicyMaintenance.Validate(bad));
-        bad["read_roots"] = new JsonArray("@unknown"); Assert.Contains(PolicyMaintenance.Validate(bad), item => item.Text() == "read_roots_unknown_placeholder");
+        Assert.Contains(PolicyValidator.Validate(bad), item => item.Text() == "native_program_must_be_exe:batch");
+        bad = f.Policy.Copy().Object(); bad["read_roots"] = new JsonArray(); Assert.Empty(PolicyValidator.Validate(bad));
+        bad["read_roots"] = new JsonArray("@working_roots"); Assert.Empty(PolicyValidator.Validate(bad));
+        bad["read_roots"] = new JsonArray("@unknown"); Assert.Contains(PolicyValidator.Validate(bad), item => item.Text() == "read_roots_unknown_placeholder");
         foreach (string operation in new[] { "native", "script", "python_unittest" })
         {
             bad = f.Policy.Copy().Object(); bad["operations"]![operation]!["run_seconds"] = 0;
-            Assert.Contains(PolicyMaintenance.Validate(bad), item => item.Text() == "operation_budget_invalid:" + operation);
+            Assert.Contains(PolicyValidator.Validate(bad), item => item.Text() == "operation_budget_invalid:" + operation);
         }
     }
 
@@ -69,17 +69,17 @@ public sealed class MaintenanceTests
     {
         using var f = new Fixture();
         var policy = f.Policy.Copy().Object(); policy.Remove("python"); policy.Remove("powershell");
-        Assert.Empty(PolicyMaintenance.Validate(policy));
+        Assert.Empty(PolicyValidator.Validate(policy));
         var template = TestEnvironment.TemplatePolicy();
         foreach (string name in new[] { "python", "powershell" })
         {
             Assert.True(!template.ContainsKey(name) && !f.Policy.ContainsKey(name));
             JsonAssert.Equal(template["programs"]![name], f.Policy["programs"]![name]);
             var bad = policy.Copy().Object(); bad["programs"]![name]!["path"] = f.FilePath("missing-" + name + ".exe");
-            Assert.Contains(PolicyMaintenance.Validate(bad), problem => problem.Text() == "program_path_missing:" + name);
+            Assert.Contains(PolicyValidator.Validate(bad), problem => problem.Text() == "program_path_missing:" + name);
         }
         string file = f.FilePath("programs-only.json"); WriteNew(file, policy);
-        var result = Fixture.Run(TestEnvironment.Server, ["validate-policy", "--policy", file]);
+        var result = Fixture.Run(TestEnvironment.Server, ["deploy", "--runtime-root", Path.GetDirectoryName(TestEnvironment.Server)!, "--policy", file, "--output", f.FilePath("programs-only-binding.json")]);
         Assert.Equal(0, result.Exit);
     }
 
@@ -100,19 +100,46 @@ public sealed class MaintenanceTests
     }
 
     [Fact, Trait("Category", "Integration")]
-    public void BuildBindingIsUsableAndRefusesOverwrite()
+    public void DeploymentBindingIsUsableAndRefusesOverwrite()
     {
         using var f = new Fixture(); string output = f.FilePath("binding.json"), root = Path.GetDirectoryName(TestEnvironment.Server)!;
-        string[] args = ["build-binding", "--runtime-root", root, "--policy", f.PolicyPath, "--output", output];
-        var built = Fixture.Run(TestEnvironment.Server, args); Assert.Equal(0, built.Exit); Assert.Equal((long)PolicyMaintenance.RuntimeNames(root).Length, JsonNode.Parse(built.Out)!["files"].Integer("count"));
+        string[] args = ["deploy", "--runtime-root", root, "--policy", f.PolicyPath, "--output", output];
+        var built = Fixture.Run(TestEnvironment.Server, args); Assert.Equal(0, built.Exit); Assert.True(JsonNode.Parse(built.Out)!["valid"].IsTrue()); Assert.Equal((long)BindingBuilder.RuntimeNames(root).Length, JsonNode.Parse(built.Out)!["files"].Integer("count"));
         string[] expected = File.Exists(Path.Combine(root, "CommandEntry.dll"))
             ? ["CommandEntry.exe", "CommandEntry.dll", "CommandEntry.deps.json", "CommandEntry.runtimeconfig.json",
-                "CommandEntry.Common.dll", "CommandEntry.Server.dll", "CommandEntry.Owner.dll", "CommandEntry.Worker.dll"]
+                "CommandEntry.Common.dll", "CommandEntry.Server.dll", "CommandEntry.Owner.dll", "CommandEntry.Worker.dll", "CommandEntry.Deployment.dll"]
             : ["CommandEntry.exe"];
         var names = Read(output)["runtime_files"].Array().Select(item => Path.GetFileName(item!["path"].String()));
         Assert.Equal(string.Join(",", expected.Order()), string.Join(",", names.Order()));
         byte[] before = File.ReadAllBytes(output); using var bound = new McpClient(f.PolicyPath, output); Assert.Equal(6, bound.Rpc("tools/list", new())["tools"].Array().Count);
         var again = Fixture.Run(TestEnvironment.Server, args); Assert.Equal(125, again.Exit); Assert.Contains("Refusing to overwrite an existing binding", again.Error); Assert.True(File.ReadAllBytes(output).AsSpan().SequenceEqual(before));
+    }
+
+    [Theory, Trait("Category", "Integration")]
+    [InlineData("version", "version must be 3")]
+    [InlineData("wait_budget_seconds", "wait_budget_seconds_required")]
+    [InlineData("programs", "program_path_missing:missing")]
+    public void DeploymentRejectsInvalidPolicyWithoutWritingBinding(string invalidField, string reason)
+    {
+        using var f = new Fixture();
+        var policy = f.Policy.Copy().Object();
+        if (invalidField == "version") policy["version"] = 2;
+        else if (invalidField == "wait_budget_seconds") policy.Remove(invalidField);
+        else policy["programs"].Object()["missing"] = new JsonObject { ["kind"] = "native", ["path"] = f.FilePath("missing.exe") };
+        string candidate = f.FilePath("invalid-policy.json"); WriteNew(candidate, policy);
+        string hash = FileHash(candidate), output = f.FilePath("must-not-create-binding.json");
+        string existing = f.Write("existing-binding.json", "retained");
+        foreach (string destination in new[] { output, existing })
+        {
+            var result = Fixture.Run(TestEnvironment.Server, ["deploy", "--runtime-root", Path.GetDirectoryName(TestEnvironment.Server)!, "--policy", candidate, "--output", destination]);
+            Assert.Equal(1, result.Exit);
+            var report = JsonNode.Parse(result.Out).Object();
+            Assert.False(report["valid"].IsTrue());
+            Assert.Contains(report["problems"].Array(), problem => problem.Text() == reason);
+            Assert.False(File.Exists(output));
+            Assert.Equal("retained", File.ReadAllText(existing));
+            Assert.Equal(hash, FileHash(candidate));
+        }
     }
 
     [Fact, Trait("Category", "Integration")]
@@ -156,7 +183,7 @@ public sealed class MaintenanceTests
         foreach (string path in Directory.GetFiles(Path.GetDirectoryName(TestEnvironment.Server)!))
             if (Path.GetExtension(path) is ".exe" or ".dll" or ".json") File.Copy(path, Path.Combine(root, Path.GetFileName(path)));
         File.Copy(f.PolicyPath, Path.Combine(root, "policy.json"));
-        _ = PolicyMaintenance.BuildBinding(root, Path.Combine(root, "policy.json"), Path.Combine(root, "binding.json"));
+        _ = BindingBuilder.BuildBinding(root, Path.Combine(root, "policy.json"), Path.Combine(root, "binding.json"));
         return root;
     }
 
@@ -166,7 +193,7 @@ public sealed class MaintenanceTests
         using var f = new Fixture(); string root = CopyRuntime(f, "maintenance-release"), policy = Path.Combine(root, "policy.json");
         var definition = Read(policy);
         definition["programs"].Object().Remove("powershell"); Save(policy, definition);
-        var build = Fixture.Run(TestEnvironment.Server, ["build-binding", "--runtime-root", root, "--policy", policy, "--output", f.FilePath("new-binding.json")]);
+        var build = Fixture.Run(TestEnvironment.Server, ["deploy", "--runtime-root", root, "--policy", policy, "--output", f.FilePath("new-binding.json")]);
         Assert.Equal(0, build.Exit); Assert.Equal(FileHash(policy), Read(f.FilePath("new-binding.json"))["policy"]!["sha256"].String());
         var update = Fixture.Run(TestEnvironment.Server, ["update-policy", "--repo-root", root]);
         Assert.Equal(0, update.Exit); Assert.Equal("verified", JsonNode.Parse(update.Out)!["state"].String());

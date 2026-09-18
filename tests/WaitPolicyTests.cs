@@ -14,7 +14,7 @@ public sealed class WaitPolicyTests
     {
         var policy = new JsonObject { ["wait_budget_seconds"] = 30, ["wait_poll_interval_seconds"] = 5, ["wait_stop_after_no_progress"] = 12 };
         policy.Remove(key);
-        Assert.Contains(PolicyMaintenance.Validate(policy), problem => problem.Text() == key + "_required");
+        Assert.Contains(PolicyValidator.Validate(policy), problem => problem.Text() == key + "_required");
     }
 
     [Theory, Trait("Category", "Integration")]
@@ -27,9 +27,10 @@ public sealed class WaitPolicyTests
         var policy = f.Policy.Copy().Object(); policy.Remove(key);
         string serve = f.FilePath("must-not-create"), candidate = f.FilePath("missing-wait-policy.json");
         policy["serve_root"] = serve; WriteNew(candidate, policy);
-        var validation = Fixture.Run(TestEnvironment.Server, ["validate-policy", "--policy", candidate]);
+        var validation = Fixture.Run(TestEnvironment.Server, ["deploy", "--runtime-root", Path.GetDirectoryName(TestEnvironment.Server)!, "--policy", candidate, "--output", f.FilePath("must-not-create-binding.json")]);
         var startup = Fixture.Run(TestEnvironment.Server, ["--policy", candidate]);
         Assert.Equal(1, validation.Exit);
+        Assert.False(File.Exists(f.FilePath("must-not-create-binding.json")));
         Assert.Contains(JsonNode.Parse(validation.Out)!["problems"].Array(), problem => problem.Text() == key + "_required");
         Assert.Equal(125, startup.Exit);
         Assert.Contains(key + "_required", startup.Error);

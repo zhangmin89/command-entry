@@ -130,7 +130,7 @@ internal sealed class Fixture : IDisposable
     internal JsonObject Anchor() => new()
     {
         ["schema_version"] = 2, ["policy"] = new JsonObject { ["path"] = PolicyPath, ["sha256"] = FileHash(PolicyPath) },
-        ["runtime_files"] = new JsonArray(PolicyMaintenance.RuntimeNames(Path.GetDirectoryName(TestEnvironment.Server)!).Select(name =>
+        ["runtime_files"] = new JsonArray(BindingBuilder.RuntimeNames(Path.GetDirectoryName(TestEnvironment.Server)!).Select(name =>
         {
             string path = Path.Combine(Path.GetDirectoryName(TestEnvironment.Server)!, name);
             return (JsonNode?)new JsonObject { ["path"] = path, ["sha256"] = FileHash(path) };

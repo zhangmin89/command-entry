@@ -2,14 +2,10 @@
     <PropertyGroup>
         <TargetFramework>net10.0-windows</TargetFramework>
         <IsAotCompatible>true</IsAotCompatible>
-        <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     </PropertyGroup>
     <ItemGroup>
-        <InternalsVisibleTo Include="CommandEntry" />
+        <ProjectReference Include="../CommandEntry.Common/CommandEntry.Common.csproj" />
         <InternalsVisibleTo Include="CommandEntry.Server" />
-        <InternalsVisibleTo Include="CommandEntry.Deployment" />
-        <InternalsVisibleTo Include="CommandEntry.Owner" />
-        <InternalsVisibleTo Include="CommandEntry.Worker" />
         <InternalsVisibleTo Include="CommandEntry.Tests" />
     </ItemGroup>
 </Project>

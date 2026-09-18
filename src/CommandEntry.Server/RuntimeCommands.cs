@@ -18,7 +18,7 @@ internal static class RuntimeCommands
         string root = Path.GetDirectoryName(path)!;
         foreach (string name in new[] { "CommandEntry.dll", "CommandEntry.runtimeconfig.json" })
             Require(!File.Exists(Path.Combine(root, name)), "Unexpected managed application companion: " + name);
-        foreach (string name in PolicyMaintenance.RuntimeNames(root))
+        foreach (string name in BindingBuilder.RuntimeNames(root))
             Require(File.Exists(Path.Combine(root, name)), "Runtime file missing: " + name);
         return new() { ["executable"] = path, ["architecture"] = "x64", ["native_aot"] = true, ["bytes"] = stream.Length };
     }
@@ -49,18 +49,10 @@ internal static class RuntimeCommands
                 var sentinel = Options(args[1..], "--records");
                 result = Sentinel.Run(await Console.In.ReadToEndAsync(), sentinel.GetValueOrDefault("--records", Path.Combine(AppContext.BaseDirectory, "hook-records")));
                 break;
-            case "validate-policy":
-                var validation = Options(args[1..], "--policy");
-                var policy = Read(BusinessPaths.Resolve(validation.Required("--policy"), "file"));
-                JsonArray problems = PolicyMaintenance.Validate(policy);
-                result = new() { ["valid"] = problems.Count == 0, ["problems"] = problems,
-                    ["programs"] = new JsonArray((policy["programs"] as JsonObject ?? new()).Select(pair => pair.Key).Order().Select(name => (JsonNode?)JsonValue.Create(name)).ToArray()),
-                    ["working_roots"] = policy["working_roots"]?.Copy() };
-                exit = problems.Count == 0 ? 0 : 1;
-                break;
-            case "build-binding":
-                var build = Options(args[1..], "--runtime-root", "--policy", "--output");
-                result = PolicyMaintenance.BuildBinding(build.Required("--runtime-root"), build.Required("--policy"), build.Required("--output"));
+            case "deploy":
+                var deploy = Options(args[1..], "--runtime-root", "--policy", "--output");
+                result = Deployment.Prepare(deploy.Required("--runtime-root"), deploy.Required("--policy"), deploy.Required("--output"));
+                exit = result["valid"].IsTrue() ? 0 : 1;
                 break;
             case "update-policy":
                 var update = Options(args[1..], "--repo-root", "--policy", "--add-program", "--program-path", "--kind");

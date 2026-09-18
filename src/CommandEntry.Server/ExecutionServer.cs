@@ -25,7 +25,7 @@ internal sealed partial class ExecutionServer
             Require(policy.Int("version", 0) == 3, "policy_version_required");
             policyHash = locks.Bindings[this.policyPath].String();
             if (bindingPath is not null) VerifyBinding(bindingPath);
-            var waitProblems = PolicyMaintenance.ValidateWaitSettings(policy);
+            var waitProblems = PolicyValidator.ValidateWaitSettings(policy);
             Require(waitProblems.Count == 0, "Invalid wait policy: " + Utf8.GetString(Packed(waitProblems)));
         }
         serveRoot = BusinessPaths.Resolve(policy["serve_root"].String()); Directory.CreateDirectory(serveRoot);
@@ -62,7 +62,7 @@ internal sealed partial class ExecutionServer
             Require(locks.Bindings[file].Text() == item["sha256"].Text(), "runtime_changed_since_review_" + Path.GetFileName(file));
             verified.Add(file);
         }
-        string[] names = PolicyMaintenance.RuntimeNames(typeof(ExecutionServer).Assembly.Location.Length > 0);
+        string[] names = BindingBuilder.RuntimeNames(typeof(ExecutionServer).Assembly.Location.Length > 0);
         foreach (string file in names.Select(name => Path.Combine(AppContext.BaseDirectory, name))
             .Append(Environment.ProcessPath ?? throw new InvalidRequest("process_path_unavailable")))
             Require(verified.Contains(BusinessPaths.Resolve(file, "file")), "runtime_binding_missing_" + Path.GetFileName(file));

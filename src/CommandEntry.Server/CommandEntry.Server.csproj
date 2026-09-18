@@ -7,6 +7,7 @@
     </PropertyGroup>
     <ItemGroup>
         <ProjectReference Include="../CommandEntry.Common/CommandEntry.Common.csproj" />
+        <ProjectReference Include="../CommandEntry.Deployment/CommandEntry.Deployment.csproj" />
         <PackageReference Include="ModelContextProtocol.Core" />
         <InternalsVisibleTo Include="CommandEntry" />
         <InternalsVisibleTo Include="CommandEntry.Tests" />

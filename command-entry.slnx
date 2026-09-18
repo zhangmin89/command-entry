@@ -1,6 +1,7 @@
 <Solution>
   <Project Path="src/CommandEntry/CommandEntry.csproj" />
   <Project Path="src/CommandEntry.Common/CommandEntry.Common.csproj" />
+  <Project Path="src/CommandEntry.Deployment/CommandEntry.Deployment.csproj" />
   <Project Path="src/CommandEntry.Server/CommandEntry.Server.csproj" />
   <Project Path="src/CommandEntry.Owner/CommandEntry.Owner.csproj" />
   <Project Path="src/CommandEntry.Worker/CommandEntry.Worker.csproj" />

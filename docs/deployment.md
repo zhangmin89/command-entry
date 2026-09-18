@@ -31,11 +31,20 @@ it has no PowerShell SDK dependency.
 2. Copy it to a separate reviewed release directory. Retain the old release.
 3. Preserve the installed policy's program mappings, roots, budgets and record
    locations. The repository policy is a template with placeholder roots.
-4. Generate a binding in a new file with absolute paths:
+4. Validate the policy and generate a binding in a new file with absolute paths:
 
 ~~~text
-CommandEntry.exe build-binding --runtime-root <install-root> --policy <policy-path> --output <new-binding-path>
+CommandEntry.exe deploy --runtime-root <install-root> --policy <policy-path> --output <new-binding-path>
 ~~~
+
+   The `deploy` command replaces the separate `validate-policy` and
+   `build-binding` commands. It holds the policy read lock from validation
+   through binding generation. Invalid policy returns exit code 1 with
+   `valid: false` and `problems`, without creating or changing the binding.
+   Success returns exit code 0 with `valid: true`, `written`, `files` and
+   `policy_sha256`. An existing output is rejected without overwriting it.
+   File/argument failures retain exit code 125. The command prepares the
+   binding; file installation and client registration remain operator steps.
 
 5. Register the MCP executable as `<install-root>/CommandEntry.exe` with
    argument entries `--policy`, the reviewed policy path, `--binding`, and
@@ -135,7 +144,7 @@ and binding under `policy-backups`, commits the candidate, and re-pins it.
 A mid-flight failure restores the old pair. Passing the live policy as the
 candidate performs validation and re-pinning without changing its bytes.
 
-Create bindings with `CommandEntry.exe build-binding --runtime-root PATH
+Validate the policy and create its binding with `CommandEntry.exe deploy --runtime-root PATH
 --policy PATH --output NEW-PATH`. The former PowerShell maintenance wrappers
 have been removed; update automation to call the native subcommands. Python
 and PowerShell interpreters are not needed for maintenance.
@@ -163,7 +172,7 @@ All three fields must be explicitly present in `policy.json` as integers:
 `wait_budget_seconds` in 1..300, `wait_poll_interval_seconds` in 1..60, and
 `wait_stop_after_no_progress` in 2..100. The deployment template supplies
 30, 5, and 12 respectively; the runtime supplies no missing-field defaults.
-Both `validate-policy` and server startup reject missing or invalid values
+Both `deploy` and server startup reject missing or invalid values
 and name the affected fields. Before upgrading a policy that omits any of
 these fields, add the intended values to the reviewed candidate and re-pin
 it through the maintenance flow above.
