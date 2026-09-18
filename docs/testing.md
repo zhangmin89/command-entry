@@ -100,8 +100,9 @@ A single silent test can still exceed an external observer's inactivity window;
 no output alone does not prove a hang. This change does not alter command-entry
 wait policy or its `stop_automatic_wait` contract.
 
-`scripts/test.ps1` is the automated entry:
-- `Mode=Managed` (default): build, run Unit, then Integration.
+`scripts/test.ps1` is the automated entry. `Mode` must be explicitly supplied;
+omitting it fails immediately, before creating artifacts or starting a build.
+- `Mode=Managed`: build, run Unit, then Integration.
 - `Mode=NativeAot`: build the tests/probe, publish into a fresh directory,
   inspect the actual PE artifact, then run Integration against that executable.
 

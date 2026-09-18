@@ -1,11 +1,13 @@
 [CmdletBinding(PositionalBinding = $false)]
 param(
     [ValidateSet('Managed', 'NativeAot')]
-    [string]$Mode = 'Managed'
+    [string]$Mode
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+
+if (-not $PSBoundParameters.ContainsKey('Mode')) { throw 'Missing required parameter: -Mode. Specify Managed or NativeAot.' }
 
 $repositoryRoot = [IO.Path]::GetFullPath((Join-Path -Path $PSScriptRoot -ChildPath '..'))
 $testProject = Join-Path -Path $repositoryRoot -ChildPath 'tests/CommandEntry.Tests.csproj'
